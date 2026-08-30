@@ -1,4 +1,6 @@
-from sync import generate_filename
+from datetime import datetime
+
+from sync import build_frontmatter, generate_filename
 
 
 def test_import():
@@ -25,3 +27,14 @@ def test_generate_filename_short():
 def test_generate_filename_unicode_safe():
     assert generate_filename("alice", "修复安全问题！！！") == \
         "alice-修复安全问题.md"
+
+
+def test_build_frontmatter_format():
+    result = build_frontmatter("alice", "bob", "test msg")
+    assert result.startswith("---\n")
+    assert result.endswith("---\n\n")
+    assert "from: alice\n" in result
+    assert "to: bob\n" in result
+    assert "subject: test msg\n" in result
+    # ISO 格式年份前缀检查（yaml输出含引号）
+    assert "date: '20" in result or 'date: 20' in result

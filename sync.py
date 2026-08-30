@@ -1,7 +1,23 @@
 """sync.py - message board sync engine"""
 import argparse
+from datetime import datetime, timezone
 import re
 import sys
+
+import yaml
+
+
+def build_frontmatter(from_user: str, to: str, subject: str) -> str:
+    """Build YAML frontmatter block"""
+    now = datetime.now(timezone.utc).astimezone()
+    data = {
+        "from": from_user,
+        "to": to,
+        "date": now.isoformat(),
+        "subject": subject,
+    }
+    yaml_text = yaml.safe_dump(data, default_flow_style=False, allow_unicode=True)
+    return f"---\n{yaml_text}---\n\n"
 
 
 def generate_filename(from_user: str, subject: str) -> str:
