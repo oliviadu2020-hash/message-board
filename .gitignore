@@ -1,0 +1,10 @@
+# Python / uv 环境
+workspaces/.venv/
+__pycache__/
+
+# 设备本地状态（每台机器各自维护，见 PRD 设计规则）
+workspaces/.current_user
+workspaces/*/.sync_seen
+
+# 系统杂物
+.DS_Store

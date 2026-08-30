@@ -1,0 +1,11 @@
+[project]
+name = "message-board-workspaces"
+version = "0.1.0"
+description = "Message Board workspaces CLI (sync.py): read/write/check multi-user messages via git"
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[tool.uv]
+package = false
