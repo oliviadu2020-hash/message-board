@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime, timezone
 import re
+import subprocess
 import sys
 
 import yaml
@@ -55,8 +56,47 @@ def main(argv=None):
     return 1
 
 def send(args):
-    print("send not implemented")
-    return 1
+    """Write message file to messages/<to>/ + git add/commit/push"""
+    from pathlib import Path
+    repo = Path(args.repo).resolve()
+    messages_dir = repo / "messages" / args.to
+    if not messages_dir.exists():
+        print(f"Error: messages dir not found: {messages_dir}", file=sys.stderr)
+        return 1
+
+    filename = generate_filename(args.from_user, args.subject)
+    filepath = messages_dir / filename
+
+    # content: --content or --file
+    if args.file:
+        content = Path(args.file).read_text()
+    else:
+        content = args.content or ""
+
+    frontmatter = build_frontmatter(args.from_user, args.to, args.subject)
+    filepath.write_text(frontmatter + content)
+
+    # git add/commit/push
+    subprocess.run(
+        ["git", "add", f"messages/{args.to}/{filename}"],
+        cwd=repo, capture_output=True, text=True
+    )
+    result = subprocess.run(
+        ["git", "commit", "-m", f"msg: {args.subject}"],
+        cwd=repo, capture_output=True, text=True
+    )
+    if result.returncode != 0 and "nothing to commit" not in result.stderr:
+        raise RuntimeError(f"git commit failed: {result.stderr}")
+    result = subprocess.run(
+        ["git", "push"],
+        cwd=repo, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git push failed: {result.stderr}")
+
+    print(f"Sent: {filepath}")
+    return 0
+
 
 def check(args):
     print("check not implemented")

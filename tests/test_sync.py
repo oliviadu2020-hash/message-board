@@ -1,6 +1,9 @@
-from datetime import datetime
+import subprocess
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from sync import build_frontmatter, generate_filename
+from sync import build_frontmatter, generate_filename, send
 
 
 def test_import():
@@ -38,3 +41,46 @@ def test_build_frontmatter_format():
     assert "subject: test msg\n" in result
     # ISO 格式年份前缀检查（yaml输出含引号）
     assert "date: '20" in result or 'date: 20' in result
+
+
+def test_send_writes_file_and_git(tmp_path):
+    """verify: file written to messages/<to>/ + git add/commit/push"""
+    # git repo
+    import subprocess
+    subprocess.run(["git", "init", "-b", "master"], cwd=tmp_path, capture_output=True)
+    # must have one prior commit to enable later git operations
+    (tmp_path / "README.md").write_text("# test\n")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+    (tmp_path / "messages" / "bob").mkdir(parents=True)
+
+    # mock args from argparse
+    args = MagicMock()
+    args.repo = str(tmp_path)
+    args.to = "bob"
+    args.from_user = "alice"
+    args.subject = "test message"
+    args.content = "hello bob"
+    args.file = None
+
+    # run（mock push 避免本地 remote 依赖）
+    with patch("sync.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        result = send(args)
+
+    assert result == 0
+
+    # file exists + frontmatter + content
+    expected = tmp_path / "messages" / "bob" / "alice-test-message.md"
+    assert expected.exists()
+    text = expected.read_text()
+    assert "from: alice" in text
+    assert "to: bob" in text
+    assert "hello bob" in text
+
+    # git: added + committed
+    result = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=tmp_path, capture_output=True, text=True
+    )
+    assert "msg: test message" in result.stdout
