@@ -63,9 +63,17 @@ def test_send_writes_file_and_git(tmp_path):
     args.content = "hello bob"
     args.file = None
 
-    # run（mock push 避免本地 remote 依赖）
-    with patch("sync.subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
+    # run
+    real_run = subprocess.run
+
+    def mock_run(cmd, **kwargs):
+        # 只拦截 git push，其它子进程正常执行
+        if cmd[-1] == "push":
+            class R: returncode = 0; stderr = ""; stdout = ""
+            return R()
+        return real_run(cmd, **kwargs)
+
+    with patch("subprocess.run", side_effect=mock_run):
         result = send(args)
 
     assert result == 0
