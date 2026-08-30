@@ -10,6 +10,7 @@
 4. 达成共识的产出（方案、决议、规范）必须沉淀到 `share/`，不要只留在邮件或对话里。
 5. 重要工作在当前用户 `workspaces/<user>/log.md` 追加日志（按日期倒序，新内容加在标题之后）。
 6. 当前用户身份记录在本机的 `workspaces/.current_user`，sync.py 会读取它；不要改动他人目录下的 `.sync_seen`。
+7. share 文件夹可以存放共识文件或者分享的文件
 
 ## 新邮件提醒（UserPromptSubmit 时机）
 
