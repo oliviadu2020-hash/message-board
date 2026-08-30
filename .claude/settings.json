@@ -1,11 +1,11 @@
 {
   "hooks": {
-    "SessionStart": [
+    "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && bash workspaces/hooks/session_start.sh"
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && bash workspaces/hooks/on_prompt.sh"
           }
         ]
       }

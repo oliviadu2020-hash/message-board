@@ -1,9 +1,14 @@
 {
   "hooks": {
-    "SessionStart": [
+    "UserPromptSubmit": [
       {
-        "type": "command",
-        "command": "bash workspaces/hooks/session_start.sh"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash workspaces/hooks/on_prompt.sh"
+          }
+        ]
       }
     ]
   }

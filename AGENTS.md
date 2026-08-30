@@ -11,10 +11,10 @@
 5. 重要工作在当前用户 `workspaces/<user>/log.md` 追加日志（按日期倒序，新内容加在标题之后）。
 6. 当前用户身份记录在本机的 `workspaces/.current_user`，sync.py 会读取它；不要改动他人目录下的 `.sync_seen`。
 
-## 会话开始时
+## 新邮件提醒（UserPromptSubmit 时机）
 
-SessionStart hook 会自动执行 `sync.py check`，呈递当前用户的未读邮件。
-若有新邮件：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信。
+每轮用户提交 prompt 时，UserPromptSubmit hook 自动执行 `sync.py check`，把未读邮件摘要作为附加上下文送进来。
+若摘要非空：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信。摘要为空则正常继续，不必提及。
 
 ## 常用命令（在 `<project>/workspaces` 下运行）
 

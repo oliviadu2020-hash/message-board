@@ -34,7 +34,7 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 
 - **工程即邮局**：整个工程由 git（一个版本管理工具，可以理解为"带完整历史记录和云端同步功能的文件夹"）承载。每位协作者都在本地持有一份完整的工程副本，改完后与云端同步。
 - **发消息 = 送信**：用户 A 想通知用户 B，就让自己的 Agent 写一封信（本质是一个 Markdown 纯文本文件），投进用户 B 在工程里的"收件箱"，然后同步到云端。
-- **收消息 = 查信箱**：用户 B 下次开始工作时，B 的 Agent 会通过 Hook（一种"会话开始时自动执行指定动作"的机制）自动检查 B 的收件箱，把新信件呈递给 B。B 读完即可处理，整个来龙去脉都已躺在工程里。
+- **收消息 = 查信箱**：用户 B 每次向自己的 Agent 发起新一轮对话时，B 的 Agent 会通过 Hook（一种"每次用户提交 prompt 时自动执行指定动作"的机制）自动检查 B 的收件箱。如果有未读信件，Hook 会把摘要拼成一条"叮咚"提醒，作为上下文一并交给 Agent，Agent 据此向 B 呈递。B 读完即可处理，整个来龙去脉都已躺在工程里。
 
 这样做，消息本身就是工程文件，天然被 git 记录、同步、追溯——讨论过程即工程历史，不再需要人工搬运。
 
@@ -46,8 +46,8 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 
 ```
 <project_name>/             # 工程根目录
-├── .claude/settings.json   # Claude SessionStart hook 配置
-├── .codex/hooks.json       # Codex SessionStart hook 配置
+├── .claude/settings.json   # Claude UserPromptSubmit hook 配置
+├── .codex/hooks.json       # Codex UserPromptSubmit hook 配置
 ├── share                   # 共享文件（达成共识的文件存放位置）
 |   └──（自由文件）
 ├── workspaces
@@ -63,7 +63,7 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 |   |   ├── workspace       # <user2> 的个人工作区（草稿区）
 |   |   └── log.md          # <user2> 的个人工作日志
 │   ├── scripts/sync.py     # workspaces的CLI 引擎（支持邮件的读、写、检查）
-│   ├── hooks/session_start.sh  # SessionStart hook 的统一入口脚本（自行定位仓库根，不依赖 hook 执行时的 cwd）
+│   ├── hooks/on_prompt.sh  # UserPromptSubmit hook 的统一入口脚本（自行定位仓库根，不依赖 hook 执行时的 cwd）
 │   ├── pyproject.toml      # uv 项目定义
 │   ├── uv.lock             # 依赖锁
 │   └── .python-version     # python 3.12
@@ -182,19 +182,21 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 
 ## Hook 配置
 
-Claude 与 Codex 的 SessionStart hook 都指向同一个入口脚本 `workspaces/hooks/session_start.sh`（已提交进仓库），不在 hook 配置里写绝对路径，因此每个协作者 clone 到任意路径都无需修改配置。
+Claude 与 Codex 的 UserPromptSubmit hook 都指向同一个入口脚本 `workspaces/hooks/on_prompt.sh`（已提交进仓库），不在 hook 配置里写绝对路径，因此每个协作者 clone 到任意路径都无需修改配置。
+
+每次用户提交 prompt，hook 都会自动跑一次 `sync.py check`。若收件箱为空、无未读邮件，入口脚本静默退出（exit 0、零输出），不打断用户与 Agent 的对话；若有未读邮件，脚本以「叮咚」形式把摘要包装后输出，Claude Code / Codex 会把这段输出作为附加上下文注入当轮对话，使 Agent 知道"有新邮件到了"。
 
 ### `.claude/settings.json`
 
 ```json
 {
   "hooks": {
-    "SessionStart": [
+    "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && bash workspaces/hooks/session_start.sh"
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && bash workspaces/hooks/on_prompt.sh"
           }
         ]
       }
@@ -208,10 +210,15 @@ Claude 与 Codex 的 SessionStart hook 都指向同一个入口脚本 `workspace
 ```json
 {
   "hooks": {
-    "SessionStart": [
+    "UserPromptSubmit": [
       {
-        "type": "command",
-        "command": "bash workspaces/hooks/session_start.sh"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash workspaces/hooks/on_prompt.sh"
+          }
+        ]
       }
     ]
   }
@@ -223,10 +230,22 @@ Claude 与 Codex 的 SessionStart hook 都指向同一个入口脚本 `workspace
 
 ```bash
 #!/usr/bin/env bash
-# workspaces/hooks/session_start.sh
+# workspaces/hooks/on_prompt.sh
 set -e
 cd "$(dirname "$0")/.."   # -> workspaces/
-uv run scripts/sync.py check
+
+# 未配置本机身份时静默退出（用户还没走过 quickstart）
+[[ -f .current_user ]] && [[ -n "$(tr -d '[:space:]' < .current_user)" ]] || exit 0
+
+OUT=$(uv run scripts/sync.py check 2>/dev/null) || true
+# sync.py 约定:无未读时输出固定字符串「暂无未读消息」,此时静默
+[[ -n "$OUT" && "$OUT" != "暂无未读消息" ]] || exit 0
+
+cat <<EOF
+叮咚,在你发起这轮调用之前,有来自其他工作区的邮件,记得提醒用户处理,摘要如下:
+
+${OUT}
+EOF
 ```
 
 ---
@@ -253,10 +272,10 @@ uv run scripts/sync.py check
 5. 重要工作在当前用户 `workspaces/<user>/log.md` 追加日志（按日期倒序，格式见工作日志的建议模板）。
 6. 当前用户身份记录在本机的 `workspaces/.current_user`，sync.py 会读取它；不要改动他人目录下的 `.sync_seen`。
 
-## 会话开始时
+## 新邮件提醒（UserPromptSubmit 时机）
 
-SessionStart hook 会自动执行 `sync.py check`，呈递当前用户的未读邮件。
-若有新邮件：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信。
+每轮用户提交 prompt 时，UserPromptSubmit hook 自动执行 `sync.py check`，把未读邮件摘要作为附加上下文送进来。
+若摘要非空：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信。摘要为空则正常继续，不必提及。
 
 ## 常用命令（在 `<project>/workspaces` 下运行）
 
@@ -336,5 +355,5 @@ uv run scripts/sync.py read    # 应读取全文并标记已读
 
 ## 5. 向用户报告
 
-告知用户：工作区已就绪；今后每次会话开始时会自动检查新邮件；想给谁写信直接说即可。
+告知用户：工作区已就绪；今后每次向 Agent 发起新一轮对话时都会自动检查新邮件（以「叮咚」形式提醒）；想给谁写信直接说即可。
 ````
