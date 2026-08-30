@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/xincheng/workspaces/llm-project/src/website-my/message-board && uv run scripts/sync.py --check --user $USER"
+          }
+        ]
+      }
+    ]
+  }
+}

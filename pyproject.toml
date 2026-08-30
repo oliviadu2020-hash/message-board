@@ -13,7 +13,7 @@ dev = [
 ]
 
 [tool.uv]
-package = true
+package = false
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [".", "scripts"]

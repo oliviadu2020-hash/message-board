@@ -1,8 +1,0 @@
-pyproject.toml
-sync.py
-message_board.egg-info/PKG-INFO
-message_board.egg-info/SOURCES.txt
-message_board.egg-info/dependency_links.txt
-message_board.egg-info/requires.txt
-message_board.egg-info/top_level.txt
-tests/test_sync.py

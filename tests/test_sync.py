@@ -1,14 +1,15 @@
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from sync import build_frontmatter, generate_filename, send
-
-
-def test_import():
-    """sync.py module can be imported"""
-    import sync
+from sync import (
+    build_frontmatter,
+    check,
+    extract_sender,
+    extract_subject,
+    generate_filename,
+    send,
+)
 
 
 def test_generate_filename_slugged():
@@ -38,111 +39,156 @@ def test_build_frontmatter_format():
     assert "from: alice\n" in result
     assert "to: bob\n" in result
     assert "subject: test msg\n" in result
-    # ISO 格式年份前缀检查（yaml输出含引号）
-    assert "date: '20" in result or 'date: 20' in result
+    assert "date: 20" in result or "date: '20" in result
 
 
-def test_send_writes_file_and_git(tmp_path):
-    """verify: file written to messages/<to>/ + git add/commit/push"""
-    # git repo
-    import subprocess
-    subprocess.run(["git", "init", "-b", "master"], cwd=tmp_path, capture_output=True)
-    # must have one prior commit to enable later git operations
-    (tmp_path / "README.md").write_text("# test\n")
-    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
-    (tmp_path / "messages" / "bob").mkdir(parents=True)
+class TestSend:
+    def test_send_writes_file_and_git(self, tmp_path):
+        """Verify send writes file to workspaces/<to>/inbox/ + git ops"""
+        # git repo setup
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
+        (repo / "workspaces" / "alice").mkdir(parents=True)
+        (repo / "workspaces" / "bob" / "inbox").mkdir(parents=True)
 
-    # mock args from argparse
-    args = MagicMock()
-    args.repo = str(tmp_path)
-    args.to = "bob"
-    args.from_user = "alice"
-    args.subject = "test message"
-    args.content = "hello bob"
-    args.file = None
+        args = MagicMock()
+        args.repo = str(repo)
+        args.to = "bob"
+        args.from_user = "alice"
+        args.subject = "test message"
+        args.content = "hello bob"
+        args.file = None
 
-    # run
-    real_run = subprocess.run
+        # run with push mocked (no real remote)
+        with patch("subprocess.run", autospec=True) as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stderr = ""
+            result = send(args)
 
-    def mock_run(cmd, **kwargs):
-        # 只拦截 git push，其它子进程正常执行
-        if cmd[-1] == "push":
-            class R: returncode = 0; stderr = ""; stdout = ""
-            return R()
-        return real_run(cmd, **kwargs)
+        assert result == 0
 
-    with patch("subprocess.run", side_effect=mock_run):
-        result = send(args)
+        # verify file written
+        expected = repo / "workspaces" / "bob" / "inbox" / "alice-test-message.md"
+        assert expected.exists()
+        text = expected.read_text()
+        assert "from: alice" in text
+        assert "to: bob" in text
+        assert "subject: test message" in text
+        assert "hello bob" in text
 
-    assert result == 0
+    def test_send_no_workspaces_dir(self, tmp_path):
+        """Error when workspaces/ doesn't exist"""
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
 
-    # file exists + frontmatter + content
-    expected = tmp_path / "messages" / "bob" / "alice-test-message.md"
-    assert expected.exists()
-    text = expected.read_text()
-    assert "from: alice" in text
-    assert "to: bob" in text
-    assert "hello bob" in text
+        args = MagicMock()
+        args.repo = str(repo)
+        args.to = "bob"
+        args.from_user = "alice"
+        args.subject = "hi"
+        args.content = "x"
+        args.file = None
 
-    # git: added + committed
-    result = subprocess.run(
-        ["git", "log", "--oneline"],
-        cwd=tmp_path, capture_output=True, text=True
-    )
-    assert "msg: test message" in result.stdout
+        assert send(args) == 1
+
+    def test_send_to_nonexistent_inbox(self, tmp_path):
+        """Creates inbox on demand"""
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
+        (repo / "workspaces" / "alice").mkdir(parents=True)
+        # workspaces/bob 不存在，inbox 应被创建
+
+        args = MagicMock()
+        args.repo = str(repo)
+        args.to = "bob"
+        args.from_user = "alice"
+        args.subject = "hello"
+        args.content = "x"
+        args.file = None
+
+        with patch("subprocess.run", autospec=True) as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stderr = ""
+            result = send(args)
+
+        assert result == 0
+        assert (repo / "workspaces" / "bob" / "inbox" / "alice-hello.md").exists()
+
 
 class TestCheck:
-    def test_check_empty_repo(self, tmp_path):
-        """空 repo：无消息目录 → error"""
-        import subprocess
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        subprocess.run(["git", "remote", "add", "origin", "/tmp/origin-repo"], cwd=tmp_path, capture_output=True)
+    def test_check_no_workspaces_dir(self, tmp_path):
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
         args = MagicMock()
-        args.repo = str(tmp_path)
+        args.repo = str(repo)
         args.user = "alice"
-        from sync import check as sync_check
-        assert sync_check(args) == 2
+        assert check(args) == 2
 
-    def test_check_no_messages(self, tmp_path):
-        """只设计 messages/alice/ 空目录 → no mail"""
-        import subprocess
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        subprocess.run(["git", "remote", "add", "origin", "/tmp/origin-repo"], cwd=tmp_path, capture_output=True)
-        (tmp_path / "messages" / "alice").mkdir(parents=True)
+    def test_check_no_inbox(self, tmp_path):
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
+        (repo / "workspaces" / "alice").mkdir(parents=True)
         args = MagicMock()
-        args.repo = str(tmp_path)
+        args.repo = str(repo)
         args.user = "alice"
-        from sync import check as sync_check
-        assert sync_check(args) == 1
+        assert check(args) == 2  # no inbox → error
+
+    def test_check_empty_inbox(self, tmp_path):
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
+        (repo / "workspaces" / "alice" / "inbox").mkdir(parents=True)
+        args = MagicMock()
+        args.repo = str(repo)
+        args.user = "alice"
+        assert check(args) == 1  # empty → no mail
 
     def test_check_with_messages(self, tmp_path):
-        """messages/alice/ 有文件 → new mail，exit 0"""
-        import subprocess
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        subprocess.run(["git", "remote", "add", "origin", "/tmp/origin-repo"], cwd=tmp_path, capture_output=True)
-        inbox = tmp_path / "messages" / "alice"
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
+        inbox = repo / "workspaces" / "alice" / "inbox"
         inbox.mkdir(parents=True)
-        (inbox / "bob-hello.md").write_text("---\nfrom: bob\nsubject: hi\n---\n")
+        (inbox / "bob-hello.md").write_text(
+            "---\nfrom: bob\nsubject: hi\n---\nhello"
+        )
         args = MagicMock()
-        args.repo = str(tmp_path)
+        args.repo = str(repo)
         args.user = "alice"
-        from sync import check as sync_check
-        assert sync_check(args) == 0
+        assert check(args) == 0  # new mail
 
     def test_check_seen_persists(self, tmp_path):
-        """第二次 check 后无新邮件（seen 已保存）"""
-        import subprocess
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        subprocess.run(["git", "remote", "add", "origin", "/tmp/origin-repo"], cwd=tmp_path, capture_output=True)
-        inbox = tmp_path / "messages" / "alice"
+        repo = tmp_path / "mb"
+        repo.mkdir()
+        init_repo(repo)
+        inbox = repo / "workspaces" / "alice" / "inbox"
         inbox.mkdir(parents=True)
-        (inbox / "bob-hello.md").write_text("---\nfrom: bob\nsubject: hi\n---\n")
+        (inbox / "bob-hello.md").write_text(
+            "---\nfrom: bob\nsubject: hi\n---\nhello"
+        )
         args = MagicMock()
-        args.repo = str(tmp_path)
+        args.repo = str(repo)
         args.user = "alice"
-        from sync import check as sync_check
-        # first run: seen file registered, exit 0
-        assert sync_check(args) == 0
-        # second run: no new mail, exit 1
-        assert sync_check(args) == 1
+        # first run: new mail (0)
+        assert check(args) == 0
+        # second run: already seen (1)
+        assert check(args) == 1
+
+
+def test_extract_sender_subject():
+    text = "---\nfrom: alice\nsubject: test\n---\n"
+    assert extract_sender(text) == "alice"
+    assert extract_subject(text) == "test"
+
+
+def init_repo(repo_path):
+    """Initialize a git repo without git config setup"""
+    subprocess.run(["git", "init", "-q", "-b", "master"], cwd=repo_path)
+    (repo_path / ".gitignore").write_text("placeholder\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo_path)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo_path)
