@@ -99,8 +99,84 @@ def send(args):
 
 
 def check(args):
-    print("check not implemented")
+    """Check for new mail: git pull + compare file list"""
+    from pathlib import Path
+    repo = Path(args.repo).resolve()
+    messages_dir = repo / "messages" / args.user
+    if not messages_dir.exists():
+        print(f"Error: messages dir not found: {messages_dir}", file=sys.stderr)
+        return 2
+
+    # 1. git fetch + pull --rebase（网络失败则跳过，不影响 check）
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin", "--quiet"],
+            cwd=repo, capture_output=True, text=True, timeout=30
+        )
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=repo, capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            result = subprocess.run(
+                ["git", "pull", "origin", branch, "--rebase", "--quiet"],
+                cwd=repo, capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                print(f"warn: git pull skipped: {result.stderr.strip()}", file=sys.stderr)
+    except Exception:
+        pass  # offline / no remote → proceed anyway
+
+    # 2. Get current file list
+    files = sorted([f.name for f in messages_dir.iterdir() if f.is_file()])
+    if not files:
+        return 1
+
+    # 3. Load seen list
+    state_path = repo / ".sync_seen"
+    seen = set()
+    if state_path.exists():
+        seen = set(state_path.read_text().strip().splitlines())
+
+    # 4. New files
+    new_files = [f for f in files if f not in seen]
+
+    # 5. Save state
+    state_path.write_text("\n".join(files) + "\n")
+
+    if new_files:
+        for fname in new_files[:3]:
+            filepath = messages_dir / fname
+            text = filepath.read_text()
+            subject = extract_subject(text)
+            print(f"📬 New mail from {extract_sender(text)}: {subject}")
+        return 0
     return 1
+
+
+def extract_sender(text: str) -> str:
+    """Extract from field from YAML frontmatter"""
+    if text.startswith("---\n"):
+        try:
+            fm = text.split("---\n")[1].split("---\n")[0]
+            data = yaml.safe_load(fm)
+            return data.get("from", "unknown")
+        except Exception:
+            pass
+    return "unknown"
+
+
+def extract_subject(text: str) -> str:
+    """Extract subject from YAML frontmatter"""
+    if text.startswith("---\n"):
+        try:
+            fm = text.split("---\n")[1].split("---\n")[0]
+            data = yaml.safe_load(fm)
+            return data.get("subject", "(no subject)")
+        except Exception:
+            pass
+    return "(no subject)"
 
 if __name__ == "__main__":
     sys.exit(main())
