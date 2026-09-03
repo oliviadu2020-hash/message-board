@@ -284,6 +284,108 @@ def cmd_check(args: argparse.Namespace) -> None:
         print(f"|{m['from']}|{to_str}|{m['date']}|{m['subject']}|")
 
 
+# ---------- 任务管理 ----------
+
+TASK_STATUSES = ["未开始", "进行中", "阻塞", "待确认", "已完成"]
+
+
+def today_str() -> str:
+    return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+
+
+def tasks_dir(user: str) -> Path:
+    return WORKSPACES_DIR / user / "tasks"
+
+
+def task_yaml_path(user: str, name: str) -> Path:
+    return tasks_dir(user) / name / "task.yaml"
+
+
+def load_task_yaml(user: str, name: str) -> dict:
+    f = task_yaml_path(user, name)
+    if not f.exists():
+        die(f"任务不存在: {name}（先 task create 或 task list 看现状）")
+    try:
+        data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_task_yaml(user: str, name: str, data: dict) -> Path:
+    f = task_yaml_path(user, name)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return f
+
+
+def cmd_task_create(args: argparse.Namespace) -> None:
+    user = read_current_user()
+    name = args.name.strip()
+    if not name or "/" in name or name in (".", ".."):
+        die("非法任务名: 不能为空、含 / 或为 . / ..")
+    git_pull()
+    target = task_yaml_path(user, name)
+    if target.exists():
+        die(f"同名任务已存在: {name}（先 task list 看现状）")
+    data = {
+        "task": name,
+        "from": f"inbox/{args.from_file}" if args.from_file else "无",
+        "status": "未开始",
+        "blocked_by": "无",
+        "updated": today_str(),
+    }
+    saved = save_task_yaml(user, name, data)
+    git_add_commit_push([saved], f"docs: {user} 创建任务 {name}")
+
+
+def cmd_task_update(args: argparse.Namespace) -> None:
+    user = read_current_user()
+    name = args.name.strip()
+    if not name or "/" in name:
+        die("非法任务名")
+    git_pull()
+    data = load_task_yaml(user, name)
+    if args.status:
+        if args.status not in TASK_STATUSES:
+            die(f"--status 只允许五态之一: {' / '.join(TASK_STATUSES)}")
+        data["status"] = args.status
+        if args.status != "阻塞":
+            data["blocked_by"] = "无"
+    if args.blocked:
+        data["blocked_by"] = args.blocked
+    if args.status is None and args.blocked is None:
+        die("task update 至少需要 --status 或 --blocked 之一")
+    data["updated"] = today_str()
+    saved = save_task_yaml(user, name, data)
+    git_add_commit_push([saved], f"docs: {user} 更新任务 {name}")
+
+
+def cmd_task_list(args: argparse.Namespace) -> None:
+    user = read_current_user()
+    git_pull()
+    rows = []
+    root = tasks_dir(user)
+    if root.exists():
+        for p in sorted(root.glob("*/task.yaml")):
+            data = load_task_yaml(user, p.parent.name)
+            rows.append({
+                "task": data.get("task") or p.parent.name,
+                "status": data.get("status") or "?",
+                "blocked_by": data.get("blocked_by") or "无",
+                "updated": data.get("updated") or "?",
+            })
+    if args.fmt == "json":
+        import json
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    print("|任务|状态|阻塞原因|更新日期|")
+    print("|----|----|--------|--------|")
+    for r in rows:
+        print(f"|{r['task']}|{r['status']}|{r['blocked_by']}|{r['updated']}|")
+
+
 # ---------- 入口 ----------
 
 def main() -> None:
@@ -305,6 +407,21 @@ def main() -> None:
     p_check = sub.add_parser("check", help="列出未读消息")
     p_check.add_argument("--fmt", choices=["markdown", "json"], default="markdown")
 
+    p_task = sub.add_parser("task", help="任务包管理")
+    task_sub = p_task.add_subparsers(dest="task_cmd", required=True)
+
+    p_create = task_sub.add_parser("create", help="创建任务包")
+    p_create.add_argument("--name", required=True, help="任务名(即目录名)")
+    p_create.add_argument("--from", dest="from_file", help="上游协同单文件名")
+
+    p_update = task_sub.add_parser("update", help="更新任务状态")
+    p_update.add_argument("--name", required=True, help="任务名")
+    p_update.add_argument("--status", choices=TASK_STATUSES, help="五态之一")
+    p_update.add_argument("--blocked", help="阻塞说明(等什么)")
+
+    p_list = task_sub.add_parser("list", help="列出本人任务")
+    p_list.add_argument("--fmt", choices=["markdown", "json"], default="markdown")
+
     args = parser.parse_args()
     if args.cmd == "read":
         cmd_read(args)
@@ -312,6 +429,13 @@ def main() -> None:
         cmd_write(args)
     elif args.cmd == "check":
         cmd_check(args)
+    elif args.cmd == "task":
+        if args.task_cmd == "create":
+            cmd_task_create(args)
+        elif args.task_cmd == "update":
+            cmd_task_update(args)
+        elif args.task_cmd == "list":
+            cmd_task_list(args)
 
 
 if __name__ == "__main__":
