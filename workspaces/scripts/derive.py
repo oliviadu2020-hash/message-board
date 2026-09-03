@@ -134,17 +134,20 @@ def render_task_board(tasks: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_data_json(messages: list[dict], tasks: list[dict], generated_at: str) -> dict:
-    """组装 site/app.js 的 data.json 契约（页面渲染层已定死，勿改键名）。
+PAGE_SIZE = 10          # 消息审计每页条数（与前端分页粒度一致）
 
-    按文件名去重：同一封信写给多人时,各收件人 inbox 里是同名副本,
-    data.json 是「公文流水」,按文件名只留一份;ledger 才按收件人分册。
+
+def _msg_items(messages: list[dict]) -> list[dict]:
+    """frontmatter 列表 → 前端展示项列表：去重 + 转展示字段，按文件名(时间戳)倒序，最新在前。
+
+    - 同名副本：同一封信群发多人时各收件人 inbox 是同名文件，只留一份；
+    - 坏 frontmatter：不抛，跳过也跳过统计（无元数据可展示）。
     """
     seen_files: set[str] = set()
-    msgs_out = []
-    for m in messages:
+    items = []
+    for m in sorted(messages, key=lambda x: x["file"], reverse=True):
         if "raw" in m or m["file"] in seen_files:
-            continue  # 无元数据 / 同封信的重复副本，跳过（构建不阻塞）
+            continue
         seen_files.add(m["file"])
         item = {
             "id": m["file"].removesuffix(".md"),
@@ -156,7 +159,50 @@ def build_data_json(messages: list[dict], tasks: list[dict], generated_at: str) 
         }
         if m.get("ref"):
             item["ref"] = m["ref"]
-        msgs_out.append(item)
+        items.append(item)
+    return items
+
+
+def _msg_stats(items: list[dict]) -> dict:
+    """从展示项预聚合的统计头部（不受分页位置影响）。"""
+    counts = {"total": len(items), "邮件": 0, "协同单": 0, "回执": 0, "退回": 0}
+    for it in items:
+        t = it.get("type", "邮件")
+        if t in ("协同单", "回执", "退回", "邮件"):
+            counts[t] += 1
+    return counts
+
+
+def _msg_ranking(messages: list[dict]) -> list[dict]:
+    """收发合计活跃度排行 top6（返回 [{name,n},...] 按 n 降序）。"""
+    tally: dict[str, int] = {}
+    for m in messages:
+        if "raw" in m:
+            continue
+        tally[m["from"]] = tally.get(m["from"], 0) + 1
+        to_val = m["to"] if isinstance(m["to"], list) else [m["to"]]
+        for t in to_val:
+            if t and "所有" not in str(t):
+                tally[str(t)] = tally.get(str(t), 0) + 1
+    top = sorted(tally.items(), key=lambda x: (-x[1], x[0]))[:6]
+    return [{"name": name, "n": n} for name, n in top]
+
+
+def split_msgs_pages(messages: list[dict], page_size: int = PAGE_SIZE) -> list[list[dict]]:
+    """把消息展示项切成固定大小页（时间倒序，最新在前）。每页是展示字段合法的列表。"""
+    items = _msg_items(messages)
+    return [items[i:i + page_size] for i in range(0, len(items), page_size)]
+
+
+def build_data_json(messages: list[dict], tasks: list[dict], generated_at: str) -> dict:
+    """组装 site/app.js 的 data.json「页面元头」契约（页面渲染层已定死，勿改键名）。
+
+    消息不再内嵌——改为页元头：total_messages / page_size / page_count；
+    统计头部由 derive 全量预聚合，保证概览视图不依赖已加载页数；任务照旧嵌入。
+    """
+    items = _msg_items(messages)
+    pages = split_msgs_pages(messages)
+    total = len(items)
 
     tasks_out = []
     for t in tasks:
@@ -173,7 +219,15 @@ def build_data_json(messages: list[dict], tasks: list[dict], generated_at: str) 
             item["ref"] = t["from"]
         tasks_out.append(item)
 
-    return {"generated_at": generated_at, "messages": msgs_out, "tasks": tasks_out}
+    return {
+        "generated_at": generated_at,
+        "total_messages": total,
+        "page_size": PAGE_SIZE,
+        "page_count": len(pages),
+        "msg_stats": _msg_stats(items),
+        "msg_ranking": _msg_ranking(messages),
+        "tasks": tasks_out,
+    }
 
 
 # ---------- CLI ----------
@@ -202,6 +256,23 @@ def cmd_render(args: argparse.Namespace) -> None:
         data_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
                              encoding="utf-8")
         print(f"[derive] 已生成 {args.data_json}")
+
+        # 消息分页文件:与 data.json 同级的 messages/0001.json ... (前端按需逐页拉取)
+        pages = split_msgs_pages(msgs)
+        pages_dir = data_path.parent / "messages"
+        pages_dir.mkdir(parents=True, exist_ok=True)
+        for i, page in enumerate(pages, start=1):
+            (pages_dir / f"{i:04d}.json").write_text(
+                json.dumps(page, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 清理多余旧分页文件（保持目录与当次构建一致）
+        for stale in pages_dir.glob("*.json"):
+            try:
+                n = int(stale.stem)
+            except ValueError:
+                continue
+            if n > len(pages):
+                stale.unlink()
+        print(f"[derive] 已生成 messages/ 分页 {len(pages)} 页")
 
 
 def main() -> None:

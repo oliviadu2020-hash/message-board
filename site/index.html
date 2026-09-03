@@ -237,6 +237,22 @@ main{ max-width:1140px; width:100%; margin:0 auto; padding:44px 28px 116px; flex
 .msg .route i{ font-style:normal; color:var(--text-tertiary); margin:0 4px; }
 .empty{ padding:34px; text-align:center; color:var(--text-tertiary); font-size:13px; }
 
+/* ---- 消息审计 · 分页栏 ---- */
+.pager-bar{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:12px 22px; background:rgba(90,78,55,.03); font-size:12px;
+  border-bottom:0;
+}
+.pager-bar:last-child{ border-radius:0 0 var(--radius) var(--radius); }
+.pager-hint{ color:var(--text-tertiary); font-family:var(--mono); font-size:11.5px; }
+.btn-loadmore{
+  border:1px solid var(--border-strong); background:var(--card-bg); color:var(--accent);
+  font:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+  padding:6px 16px; border-radius:999px; transition:all .18s ease; white-space:nowrap;
+}
+.btn-loadmore:hover:not(:disabled){ background:var(--accent-tint); border-color:var(--accent); }
+.btn-loadmore:disabled{ opacity:.55; cursor:not-allowed; }
+
 /* ---- 任务看板 ---- */
 #view-kanban{ display:flex; flex-direction:column;
   height:calc(100dvh - 60px - 44px - 116px);      /* 顶栏 + main 上padding + 底部浮动区留白 */

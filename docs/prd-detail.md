@@ -700,6 +700,7 @@ uv run scripts/sync.py read    # 应读取全文并标记已读
 ---
 ---
 ---
+---
 
 ## 附录 B：完整技术规范
 
@@ -910,16 +911,21 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 
 - **审计网页（github.io 静态站点）**——本系统的对外主视图，数据与 Markdown 版同源
   - 产物三件套（由 `board.yml` 在 CI 内生成，经 `actions/upload-pages-artifact` + `actions/deploy-pages` 发布到 GitHub Pages，**不进 git 仓库**——仓库历史只留人写的东西，生成物活在 CI 产物与 Pages 托管层）：
-    1. `data.json`：全量审计数据，键与 `site/app.js` 的读取契约严格一致——
-       - `messages[]`：`{id, type, time, from, to, subject, ref?}`。`type` 取 frontmatter 的 type（缺失按「邮件」）；`time` 为 `MM-DD HH:mm` 展示格式；`to` 由 frontmatter 的列表拼接为逗号分隔字符串；`ref` 有才带
-       - `tasks[]`：`{id, title, owner, state, updated_at, blocked_by?, ref?}`。`state` 是**英文五键**：`未开始→todo / 进行中→doing / 阻塞→blocked / 待确认→review / 已完成→done`（页面渲染层依赖，勿改）；`updated_at` 取 task.yaml 的 updated；阻塞任务带 `blocked_by`；有上游 from 的任务带 `ref`
-       - **消息按文件名去重**：`sync.py write --to A,B` 会给 A、B 收件箱各写一份**同名文件**（同一封信的副本）；data.json 是「公文流水」，按文件名只留一份；而 `board/ledger/<user>.md` 按收件人分册保留每人收到的全部副本
+    1. **`data.json`（页面元头）** + **`messages/0001.json … NNNN.json`（消息分页文件）**——消息流水按文件分页，不再把全量消息内嵌进 data.json：
+       - `data.json` 结构：`{generated_at, total_messages, page_size, page_count, msg_stats, msg_ranking, tasks}`
+         - `total_messages` 去重后的总消息数；`page_size` 固定 **10**；`page_count` 总分页数
+         - `msg_stats`（derive 全量预聚合）：`{total, 邮件, 协同单, 回执, 退回}`——**概览视图的统计卡片来自这里，不受已加载页数影响**
+         - `msg_ranking`（derive 全量预聚合）：收发活跃度 top6 `[{name, n}]`
+         - `tasks[]`：`{id, title, owner, state, updated_at, blocked_by?, ref?}`。`state` 是**英文五键**：`未开始→todo / 进行中→doing / 阻塞→blocked / 待确认→review / 已完成→done`（页面渲染层依赖，勿改）
+       - `messages/{i:04d}.json`：第 i 页的消息列表，每页 10 条，**按时间倒序**（最新在前）。每条条目 `{id, type, time, from, to, subject, ref?}`（`type` 缺失按「邮件」；`time` 为 `MM-DD HH:mm` 展示格式）
+       - **兼容**：若 data.json 含 `messages` 数组（旧契约或 `MOCK_DATA`），前端全量使用、不分页——保证本地双击 `index.html`（fetch 失败回退内置 MOCK_DATA）也能完整预览
+       - **消息按文件名去重**：`sync.py write --to A,B` 会给 A、B 收件箱各写一份**同名文件**（同一封信的副本）；data.json 与分页文件是「公文流水」，按文件名只留一份；而 `board/ledger/<user>.md` 按收件人分册保留每人收到的全部副本
        - **坏文件降级**：frontmatter 解析失败的信件不进 messages（无元数据可展示）；task.yaml 解析失败或 status 非五态时任务照常进 tasks、`state` 兜底为 `todo`——任何单个坏文件都不阻塞聚合构建（违规由 CI lint 标红）
     2. `site/index.html`：单页应用入口，自包含样式
     3. `site/app.js`：原生 JS，无框架（演示系统要能离线读源码）；fetch 一律用相对路径（站点挂在 `/message-board/` 子路径下，绝对路径会 404）；`data.json` 加载失败时回退内置 `MOCK_DATA`，本地双击 `site/index.html` 也能完整预览
   - 三个视图（底部浮动 Tab 切换，URL Hash 深链 `#view=stats|messages|kanban`）：
     - **全局概览**：信件流通总量、协同单闭环率、活跃协作任务、受阻事项四张统计卡，外加「任务五态分布」「协作活跃度排行（收发信件）」两组横向条形图——给演示的总览开场用
-    - **消息审计**：全部信件元数据流水列表，可按公文类型（邮件/协同单/回执/退回）筛选，行内显示 ref 应答链引用
+    - **消息审计**：信件元数据流水，**分页展示（每页 10 条、按时间倒序）**——前端按需逐页拉取 `messages/NNNN.json`，底部有「加载更多」按钮；可按公文类型（邮件/协同单/回执/退回）筛选，行内显示 ref 应答链引用
     - **任务看板**：五态分列的全员任务，阻塞项显示 blocked_by 依赖；每列在任务过多时列内独立滚动，列高占满当前视口
   - 视觉与交互规范（已在 `site/index.html` 原型落地，后续演进以此为准）：
     - 基调：Apple 式排版骨架（系统字体栈、大留白、圆角卡片、1px 半透明细线）+ **宣纸底色** `#f5f0e4`，卡片用亮半度的纸色 `#fdfbf5`，看板列用深一档纸色 `#efe8d8`
@@ -935,7 +941,7 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
   - 五个步骤：
     1. **聚合**：运行 `derive.py render`（扫所有 inbox frontmatter + 所有 task.yaml → 聚合数据 → `board/` Markdown + `_site/data.json`；渲染纯函数与 sync.py 共用 `parse_message`，且与 pytest 直测的是同一份代码）
     2. **渲染 Markdown**：聚合数据 → `board/ledger/<user>.md` + `board/task-board.md`
-    3. **渲染网页产物**：聚合数据 → `data.json`；与 `site/index.html`、`site/app.js` 一起打成 Pages 产物（坏文件照常降级进数据、缺字段留空/兜底，不让单个坏文件阻塞构建）
+    3. **渲染网页产物**：聚合数据 → `data.json`（页面元头）+ `messages/*.json`（分页文件）；与 `site/index.html`、`site/app.js` 一起打成 Pages 产物（坏文件照常降级进数据、缺字段留空/兜底，不让单个坏文件阻塞构建）
     4. **lint**：`derive.py lint --base <before> --head <sha>`，发现违规即 workflow 失败标红，但不改任何文件：
        - 非 sync.py 提交记录中改动了 `workspaces/*/inbox/`（绕过投递引擎）——判定方式：改动过 inbox 文件的提交，其 commit message 不符合 sync.py 生成的固定模式 `docs: <user> sends a message to <...>`，即视为绕过（约定大于拦截的已知妥协）
        - `task.yaml` 的 status 不在五态枚举内（工作树全量扫描）
@@ -949,7 +955,7 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
   - write 带 `--type`/`--ref` 的 frontmatter 正确性；`--ref` 文件不存在时的拒绝路径
   - task create / update / list 正常流；非法状态值拒绝；同名任务重复创建拒绝；非法任务名拒绝
   - check 的「任务现状」段输出；json `{messages, tasks}` 结构；全静默场景
-  - 台账/看板/data.json 生成函数：喂伪造的 inbox + tasks，断言分簿、分列（时间倒序）、JSON schema、坏 frontmatter/坏 yaml 降级、data.json 同名副本去重（生成函数即 `derive.py`，由 sync.py 与 board.yml 共用同一份代码）
+  - 台账/看板/data.json 生成函数：喂伪造的 inbox + tasks，断言分簿、分列（时间倒序）、JSON schema、坏 frontmatter/坏 yaml 降级、data.json 同名副本去重（生成函数即 `derive.py`，由 sync.py 与 board.yml 共用同一份代码）；消息分页函数 `split_msgs_pages`：每页 10 条、按时间倒序切分、`page_count` 与 `total_messages` 一致
   - lint 规则：干净仓库无违规；绕过引擎写 inbox 被标；status 出五态被标；非 board-bot 改 board/ 被标
 
 - **收件箱（`workspaces/<user>/inbox/`）**

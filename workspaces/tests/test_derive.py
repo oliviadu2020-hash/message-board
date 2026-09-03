@@ -58,19 +58,72 @@ def test_build_data_json_contract(fake_ws):
     msgs = derive.scan_messages(fake_ws)
     tasks = derive.scan_tasks(fake_ws)
     payload = derive.build_data_json(msgs, tasks, "2026-09-03T15:00:00+08:00")
-    assert set(payload) == {"generated_at", "messages", "tasks"}
+    # 新契约：messages 不再内嵌，page_* 元头 + stats/tasks
+    assert "messages" not in payload, "data.json 不应内嵌 messages 数组(分页时代)"
+    assert set(payload) == {"generated_at", "total_messages", "page_size", "page_count",
+                            "msg_stats", "msg_ranking", "tasks"}
     assert payload["generated_at"] == "2026-09-03T15:00:00+08:00"
-    # 坏 frontmatter 消息不阻塞、不进 messages(无元数据可展示)
-    assert all("raw" not in m for m in payload["messages"])
+    assert payload["page_size"] == 10
+    # fake_ws 有两封好信(坏 frontmatter 不计入)：page_count=1、total=2
+    assert payload["total_messages"] == 2
+    assert payload["page_count"] == 1
     by_dir = {t["id"]: t for t in payload["tasks"]}
     assert by_dir["任务甲"]["state"] == "doing"
     assert by_dir["任务乙"]["state"] == "todo", "坏 yaml 降级为 todo 兜底"
+    # stats 头部全局预聚合，概览统计不依赖分页位置
+    assert payload["msg_stats"]["total"] == 2
+    assert payload["msg_stats"]["协同单"] == 1 and payload["msg_stats"]["回执"] == 1
+    assert payload["msg_ranking"][0]["n"] >= 1, "活跃度排行至少一项"
     # 可序列化为 json
     json.dumps(payload, ensure_ascii=False)
 
 
+def test_split_pages_by_time_desc_and_size_10(tmp_path):
+    """12 封信 → 每页 10 条 → 2 页;切出来的页按时间倒序。"""
+    import derive as d
+
+    ws = tmp_path / "workspaces"
+    (ws / "alice" / "inbox").mkdir(parents=True)
+    # 造 12 封带递增时间戳的信
+    for i in range(12):
+        (ws / "alice" / "inbox" / f"2026-09-{i+1:02d}-10-00-00-+0800-bob.md").write_text(
+            f"---\nfrom: bob\nto:\n  - alice\ndate: 2026-09-{i+1:02d} 10:00:00 +0800\n"
+            f"subject: 信{i}\ntype: 邮件\n---\n正文\n", encoding="utf-8")
+    msgs = d.scan_messages(ws)
+    pages = d.split_msgs_pages(msgs, page_size=10)
+    assert len(pages) == 2, f"12 条 / 每页 10 应得 2 页,得到 {len(pages)}"
+    assert len(pages[0]) == 10 and len(pages[1]) == 2
+    # 时间倒序:第 1 页第一条是 09-12(最新),最后一条是 09-03
+    assert pages[0][0]["time"] == "09-12 10:00", f"应最新在前,得到 {pages[0][0]}"
+    assert pages[0][-1]["time"] == "09-03 10:00"
+    assert pages[1][0]["time"] == "09-02 10:00"
+    assert pages[1][-1]["time"] == "09-01 10:00", f"应最旧在后,得到 {pages[1][-1]}"
+    # 每页条目为前端展示字段 id(去.md)/time/from/to/subject/type(兼容可选 ref)
+    assert pages[0][0]["id"] == "2026-09-12-10-00-00-+0800-bob"
+
+
+def test_build_pages_and_contract_parallel(tmp_path):
+    """同一份输入:split 与 build_data_json 给出一致的页数与总量。"""
+    ws = tmp_path / "workspaces"
+    (ws / "alice" / "inbox").mkdir(parents=True)
+    for i in range(23):
+        (ws / "alice" / "inbox" / f"2026-09-{i+1:02d}-10-00-00-+0800-bob.md").write_text(
+            f"---\nfrom: bob\nto:\n  - alice\ndate: 2026-09-{i+1:02d} 10:00:00 +0800\n"
+            f"subject: 信{i}\ntype: 邮件\n---\n正文\n", encoding="utf-8")
+    msgs = derive.scan_messages(ws)
+    payload = derive.build_data_json(msgs, [], "2026-09-03T15:00:00+08:00")
+    pages = derive.split_msgs_pages(msgs, page_size=10)
+    assert payload["total_messages"] == 23
+    assert payload["page_count"] == 3       # 23 / 10 → 3 页
+    assert len(pages) == 3
+    # 每页都是一个合法消息对象列表(id/time/from/to/subject/type)
+    for pg in pages:
+        for item in pg:
+            assert set(item) >= {"id", "type", "time", "from", "to", "subject"}
+
+
 def test_build_data_json_dedupes_multi_recipient_copies(fake_ws):
-    """同一封信投给多人时各收件人 inbox 是同名副本，data.json 只留一份。"""
+    """同一封信投给多人时各收件人 inbox 是同名副本，分页流水只留一份。"""
     # alice 的 inbox 里再放一封与 bob 的 回执B 同名的信(模拟群发副本)
     dup = fake_ws / "alice" / "inbox" / "2026-09-03-11-00-00-+0800-alice.md"
     dup.write_text(
@@ -79,9 +132,8 @@ def test_build_data_json_dedupes_multi_recipient_copies(fake_ws):
         encoding="utf-8")
     msgs = derive.scan_messages(fake_ws)
     payload = derive.build_data_json(msgs, [], "2026-09-03T15:00:00+08:00")
-    ids = [m["id"] for m in payload["messages"]]
-    assert len(ids) == len(set(ids)), "同名副本必须去重"
-    assert ids.count("2026-09-03-11-00-00-+0800-alice") == 1
+    # 两封合法信(协同单A + 回执B)，其中一个收件人 side 的副本去掉
+    assert payload["total_messages"] == 2, "同名副本必须去重，总数按唯一文件名计 2"
 
 
 def test_render_ledger_columns(fake_ws):

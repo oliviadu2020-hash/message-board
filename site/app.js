@@ -1,15 +1,24 @@
 /* 协作审计台 · 渲染逻辑
  * 数据源：优先 fetch site/data.json（Actions 派生产物），失败则回退内置 MOCK_DATA。
  * 路由：URL Hash —— #view=stats | messages | kanban
+ * 消息分页：data.json 是页面元头；messages/0001.json ... 每页 10 条按需拉取。
  */
 "use strict";
 
 /* ---------- 数据契约（与 Actions 生成的 data.json 对齐） ----------
+ * data.json（页面元头，无内嵌 messages）:
  * {
  *   generated_at: "2026-09-03T15:40:00+08:00",
- *   messages: [{ id, type, time, from, to, subject, ref? }],   // type: 邮件|协同单|回执|退回
- *   tasks:    [{ id, title, owner, state, updated_at, blocked_by?, ref? }]
- * }                                                           // state: todo|doing|blocked|review|done
+ *   total_messages: 25, page_size: 10, page_count: 3,
+ *   msg_stats:   { total, 邮件, 协同单, 回执, 退回 },
+ *   msg_ranking: [{ name, n }],                       // 活跃排行 top6
+ *   tasks: [{ id, title, owner, state, updated_at, blocked_by?, ref? }]
+ * }                                                  // state: todo|doing|blocked|review|done
+ *
+ * messages/0001.json ... messages/0003.json （页文件, 每页 10 条, 时间倒序）:
+ * [{ id, type, time, from, to, subject, ref? }]      // type: 邮件|协同单|回执|退回
+ *
+ * 兼容: 若 data.json 自带 messages 数组(旧契约/MOCK_DATA)则全量使用,不分页。
  */
 
 const MOCK_DATA = {
@@ -67,8 +76,11 @@ const STATE_STYLE = {
 };
 const STATE_ORDER = ["todo", "doing", "blocked", "review", "done"];
 
-let DATA = null;
+let DATA = null;          // 元头（新契约）或含 messages 数组（旧契约/MOCK）
+let MSGS = [];            // 已加载的消息流水（分页模式按页累积；旧契约=全量）
+let pagesLoaded = 0;      // 已加载页数（分页模式）
 let msgFilter = "全部";
+let msgLoadError = false; // 加载页失败标记（按钮变「重试」）
 
 /* ---------- 工具 ---------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -85,8 +97,23 @@ const fmtTime = iso => {
     return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   } catch { return iso; }
 };
-const countType = t => DATA.messages.filter(m => m.type === t).length;
+const isPagedMode = () => DATA && !Array.isArray(DATA.messages) && Number.isFinite(DATA.page_count);
+const totalMessages = () => isPagedMode() ? DATA.total_messages : MSGS.length;
+const countType = t => isPagedMode()
+  ? (DATA.msg_stats?.[t] ?? 0)
+  : MSGS.filter(m => m.type === t).length;
 const countState = s => DATA.tasks.filter(t => t.state === s).length;
+/* 活跃排行：分页模式用 derive 预聚合的 msg_ranking；旧契约按全量 MSGS 现算 */
+const getRanking = () => {
+  if (isPagedMode() && DATA.msg_ranking?.length)
+    return DATA.msg_ranking.map(x => [x.name, x.n]);
+  const tally = {};
+  MSGS.forEach(m => {
+    tally[m.from] = (tally[m.from] || 0) + 1;
+    if (m.to && !m.to.includes("所有")) tally[m.to] = (tally[m.to] || 0) + 1;
+  });
+  return Object.entries(tally).sort((a, b) => b[1] - a[1]);
+};
 
 /* ---------- 概览 ---------- */
 function renderStats() {
@@ -95,7 +122,7 @@ function renderStats() {
   const doing = countState("doing"), blocked = countState("blocked");
   const loopRate = collab ? Math.round((receipt / collab) * 100) + "%" : "—";
   const cards = [
-    { k: "信件流通总量", v: DATA.messages.length, s: `协同单 ${collab} / 回执 ${receipt} / 邮件 ${mail}` },
+    { k: "信件流通总量", v: totalMessages(), s: `协同单 ${collab} / 回执 ${receipt} / 邮件 ${mail}` },
     { k: "协同单闭环率", v: loopRate,            s: `已应答 ${receipt} / 派发总单量 ${collab}` },
     { k: "活跃协作任务", v: doing + blocked,      s: `进行中 ${doing} · 阻塞 ${blocked}` },
     { k: "受阻事项",     v: blocked,              s: "需跨团队协商推进", danger: blocked > 0 }
@@ -121,13 +148,8 @@ function renderStats() {
        <span class="n">${n}</span>`));
   });
 
-  // 协作活跃度排行（收发合计，取前 6）
-  const tally = {};
-  DATA.messages.forEach(m => {
-    tally[m.from] = (tally[m.from] || 0) + 1;
-    if (m.to && !m.to.includes("所有")) tally[m.to] = (tally[m.to] || 0) + 1;
-  });
-  const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  // 协作活跃度排行（收发合计，取前 6；分页模式来自头部预聚合）
+  const top = getRanking().slice(0, 6);
   const rb = $("#rank-bars");
   rb.innerHTML = "";
   const rmax = Math.max(1, ...top.map(x => x[1]));
@@ -154,8 +176,10 @@ function renderMsgFilters() {
 function renderMessages() {
   const list = $("#msg-list");
   list.innerHTML = "";
-  const rows = DATA.messages.filter(m => msgFilter === "全部" || m.type === msgFilter);
-  if (!rows.length) { list.append(el("div", "empty", "暂无该类型公文")); return; }
+  const rows = MSGS.filter(m => msgFilter === "全部" || m.type === msgFilter);
+  if (!rows.length && !canLoadMore()) {
+    list.append(el("div", "empty", "暂无该类型公文")); return;
+  }
   rows.forEach(m => {
     const row = el("div", "msg");
     row.append(
@@ -167,6 +191,54 @@ function renderMessages() {
     row.querySelector(".badge").style.setProperty("--bc", MSG_STYLE[m.type] || "var(--text)");
     list.append(row);
   });
+  if (canLoadMore() || isPagedMode()) {
+    const bar = el("div", "msg pager-bar", "");
+    const info = isPagedMode()
+      ? `已加载 ${MSGS.length}/${DATA.total_messages} 条 · 第 ${pagesLoaded}/${DATA.page_count} 页`
+      : `${MSGS.length} 条`;
+    const btn = document.createElement("button");
+    btn.className = "btn-loadmore";
+    btn.id = "btn-loadmore";
+    if (!isPagedMode() || !canLoadMore()) {
+      btn.id = "btn-loadmore-done";
+      btn.textContent = "已全部加载";
+      btn.disabled = true;
+    } else {
+      btn.textContent = msgLoadError ? "加载失败 · 点击重试" : "加载更多";
+    }
+    btn.addEventListener("click", async () => {
+      if (!canLoadMore()) return;
+      btn.disabled = true;
+      btn.textContent = "加载中…";
+      await loadNextPage();
+    });
+    bar.append(el("span", "pager-hint", info), btn);
+    list.append(bar);
+  }
+}
+
+/* 还能不能再拉下一页 ? */
+function canLoadMore() {
+  return isPagedMode() && pagesLoaded < DATA.page_count && !msgLoadError;
+}
+
+/* 拉取下一页 messages/NNNN.json 并追加到 MSGS；失败置 error 状态 */
+async function loadNextPage() {
+  if (!canLoadMore() && !msgLoadError) return;
+  const next = pagesLoaded + 1;
+  if (next > DATA.page_count) return;
+  try {
+    const r = await fetch(`messages/${String(next).padStart(4, "0")}.json`, { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    const page = await r.json();
+    MSGS = MSGS.concat(page);
+    pagesLoaded = next;
+    msgLoadError = false;
+  } catch (e) {
+    console.warn("加载消息分页失败:", e);
+    msgLoadError = true;
+  }
+  renderMessages();
 }
 
 /* ---------- 任务看板 ---------- */
@@ -272,6 +344,14 @@ async function boot() {
     const r = await fetch("data.json", { cache: "no-store" });
     DATA = r.ok ? await r.json() : MOCK_DATA;
   } catch { DATA = MOCK_DATA; }
+
+  // 契约兼容：旧契约自带 messages 数组就直接用；新契约(分页)先拉第 1 页
+  if (Array.isArray(DATA.messages)) {
+    MSGS = DATA.messages;
+  } else if (isPagedMode() && DATA.page_count > 0) {
+    try { await loadNextPage(); } catch {/* 静默,renderMessages 会显示空态/重试 */}
+  }
+
   $("#snap-time").textContent = fmtTime(DATA.generated_at);
   renderStats(); renderMsgFilters(); renderMessages(); renderKanban();
   show(location.hash.replace("#view=", "") || "stats");
