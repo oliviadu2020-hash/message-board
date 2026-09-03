@@ -196,16 +196,76 @@ function renderKanban() {
 
 /* ---------- 路由与启动 ---------- */
 const VIEWS = ["stats", "messages", "kanban"];
+
+/* 黑色激活块穿梭：把 thumb 平移到当前 active 按钮并等宽过渡 */
+function positionSegThumb(instant = false) {
+  const thumb = $("#seg-thumb");
+  if (!thumb) return;
+  const active = document.querySelector(".seg button.active");
+  if (!active) { thumb.hidden = true; return; }
+  const wasHidden = thumb.hidden;
+  instant = instant || wasHidden;         /* 首次显示直接瞬移，不从 0 宽闪入 */
+  if (instant) thumb.style.transition = "none";
+  thumb.hidden = false;
+  thumb.style.width = active.offsetWidth + "px";
+  thumb.style.transform = `translateX(${active.offsetLeft}px)`;
+  if (instant) {
+    void thumb.offsetWidth;
+    thumb.style.transition = "";
+  }
+}
+
 function show(name) {
   if (!VIEWS.includes(name)) name = "stats";
   VIEWS.forEach(v => { $("#view-" + v).hidden = v !== name; });
   document.querySelectorAll(".seg button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === name));
+  positionSegThumb(false);
   if (location.hash !== "#view=" + name) history.replaceState(null, "", "#view=" + name);
 }
 document.querySelectorAll(".seg button").forEach(b =>
   b.addEventListener("click", () => show(b.dataset.view)));
 window.addEventListener("hashchange", () => show(location.hash.replace("#view=", "")));
+window.addEventListener("resize", () => positionSegThumb(true));
+
+/* ---------- 帮助 FAB（说明卡片） ---------- */
+function initHelpFab() {
+  const fab = $("#help-fab"), card = $("#help-card"), backdrop = $("#help-backdrop");
+  if (!fab || !card || !backdrop) return;
+
+  const elements = [card, backdrop];
+  const setExpanded = (v) => fab.setAttribute("aria-expanded", String(v));
+
+  const CLOSE_MS = 180;
+  let timer = null;
+  const cancelCloseTimer = () => clearTimeout(timer);
+
+  const openCard = () => {
+    cancelCloseTimer();
+    elements.forEach((elm) => elm.classList.remove("closing", "open"));
+    [card, backdrop].forEach((elm) => { elm.hidden = false; });
+    [card, backdrop].forEach((elm) => { void elm.offsetWidth; elm.classList.add("open"); });
+    setExpanded(true);
+  };
+
+  // 关闭 = 出场动画 → hidden；超时后统一收尾（与 CLOSE_MS 匹配的短动画时长）
+  const closeCard = () => {
+    if (card.hidden) return;
+    setExpanded(false);
+    elements.forEach((elm) => { elm.classList.remove("open"); elm.classList.add("closing"); });
+    cancelCloseTimer();
+    timer = setTimeout(() => {
+      elements.forEach((elm) => { elm.hidden = true; elm.classList.remove("closing"); });
+    }, CLOSE_MS);
+  };
+
+  fab.addEventListener("click", () => (card.hidden ? openCard() : closeCard()));
+  backdrop.addEventListener("click", closeCard);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !card.hidden) { closeCard(); fab.focus(); }
+  });
+}
+initHelpFab();
 
 async function boot() {
   try {
