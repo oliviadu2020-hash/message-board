@@ -266,22 +266,36 @@ def cmd_check(args: argparse.Namespace) -> None:
                 "to": [str(t) for t in to_val],
                 "date": str(msg.get("date", "?")),
                 "subject": str(msg.get("subject", "")),
+                "type": str(msg.get("type", "邮件")),
+                "ref": str(msg.get("ref", "")) or None,
             })
+
+    tasks = task_status_summary(user)
+    has_task_section = bool(tasks["in_progress"] or tasks["blocked"])
 
     if args.fmt == "json":
         import json
-        print(json.dumps(unread, ensure_ascii=False, indent=2))
+        print(json.dumps({"messages": unread, "tasks": tasks},
+                         ensure_ascii=False, indent=2))
         return
 
-    if not unread:
+    if not unread and not has_task_section:
         print("暂无未读消息")
         return
 
-    print("|发件人|收件人|日期|标题|")
-    print("|-----|-----|---|----|")
-    for m in unread:
-        to_str = ",".join(m["to"]) if m["to"] else "?"
-        print(f"|{m['from']}|{to_str}|{m['date']}|{m['subject']}|")
+    if unread:
+        print("|发件人|收件人|日期|类型|标题|")
+        print("|-----|-----|---|----|----|")
+        for m in unread:
+            to_str = ",".join(m["to"]) if m["to"] else "?"
+            ref = f" ↩ {m['ref']}" if m["ref"] else ""
+            print(f"|{m['from']}|{to_str}|{m['date']}|{m['type']}|{m['subject']}{ref}|")
+
+    if has_task_section:
+        print("\n## 任务现状")
+        print(f"- 进行中 {len(tasks['in_progress'])} 件 / 阻塞 {len(tasks['blocked'])} 件")
+        for b in tasks["blocked"]:
+            print(f"- 阻塞：{b['name']}（{b['blocked_by']}）")
 
 
 # ---------- 任务管理 ----------
@@ -384,6 +398,24 @@ def cmd_task_list(args: argparse.Namespace) -> None:
     print("|----|----|--------|--------|")
     for r in rows:
         print(f"|{r['task']}|{r['status']}|{r['blocked_by']}|{r['updated']}|")
+
+
+def task_status_summary(user: str) -> dict:
+    """统计本人任务: 进行中清单 + 阻塞明细。"""
+    in_progress: list[str] = []
+    blocked: list[dict] = []
+    root = tasks_dir(user)
+    if not root.exists():
+        return {"in_progress": in_progress, "blocked": blocked}
+    for p in sorted(root.glob("*/task.yaml")):
+        data = load_task_yaml(user, p.parent.name)
+        status = data.get("status")
+        name = data.get("task") or p.parent.name
+        if status == "进行中":
+            in_progress.append(name)
+        elif status == "阻塞":
+            blocked.append({"name": name, "blocked_by": data.get("blocked_by") or "无"})
+    return {"in_progress": in_progress, "blocked": blocked}
 
 
 # ---------- 入口 ----------
