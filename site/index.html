@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message Board · 协作与任务审计台</title>
+<style>
+/* ===== Apple 排版骨架 × 宣纸底色 ===== */
+:root{
+  /* 纸面 */
+  --bg: #f5f0e4;                    /* 宣纸 */
+  --card-bg: #fdfbf5;               /* 亮半度的纸，作卡片 */
+  --card-bg-subtle: #efe8d8;        /* 深一档的纸，作看板列 */
+  /* 墨 */
+  --text: #1d1d1f;
+  --text-secondary: #6f6a5e;
+  --text-tertiary: #a39d8d;
+  /* 线 */
+  --border: rgba(90, 78, 55, .13);
+  --border-strong: rgba(90, 78, 55, .22);
+  /* 强调（保留 Apple 蓝的克制，换为更配宣纸的黛蓝） */
+  --accent: #3a5a7b;
+  --accent-tint: rgba(58, 90, 123, .09);
+  /* 传统低饱和点缀 */
+  --cinnabar: #b03a2e;   /* 朱砂 · 危险/受阻 */
+  --indigo:   #3a5a7b;   /* 黛蓝 · 邮件 */
+  --pine:     #4a7a5e;   /* 松绿 · 完成 */
+  --ochre:    #b07d2b;   /* 赭石 · 阻塞 */
+  --plum:     #7d5a78;   /* 紫檀 · 回执 */
+  --amber:    #c9a227;   /* 藤黄 · 待确认 */
+  --ink-gray: #8a8474;   /* 墨灰 · 未开始 */
+
+  --radius-sm: 8px;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(60,50,30,.05), 0 8px 24px rgba(60,50,30,.06);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+*{ box-sizing:border-box; margin:0; padding:0; }
+body{
+  font-family:var(--font); color:var(--text); background:var(--bg);
+  line-height:1.5; -webkit-font-smoothing:antialiased; font-size:14px;
+  display:flex; flex-direction:column; min-height:100dvh;   /* footer 沉底 */
+}
+
+/* ===== 顶栏 ===== */
+.topbar{
+  position:sticky; top:0; z-index:50;
+  display:flex; align-items:center; justify-content:space-between;
+  height:60px; padding:0 28px;
+  background:rgba(245,240,228,.86); backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--border);
+}
+.brand{ display:flex; align-items:center; gap:10px; font-size:15px; font-weight:700; }
+.brand .pill{
+  font-size:11px; font-weight:500; color:var(--text-secondary);
+  border:1px solid var(--border-strong); border-radius:999px; padding:2px 9px;
+}
+/* ===== 底部浮动 Tab ===== */
+.seg{
+  position:fixed; left:50%; bottom:max(18px, env(safe-area-inset-bottom)); z-index:60;
+  transform:translateX(-50%);
+  display:flex; gap:2px; padding:5px;
+  background:rgba(253,251,245,.82); backdrop-filter:blur(18px);
+  border:1px solid var(--border); border-radius:999px;
+  box-shadow:0 4px 12px rgba(60,50,30,.08), 0 16px 40px rgba(60,50,30,.14);
+}
+.seg button{
+  border:0; background:transparent; cursor:pointer;
+  font:inherit; font-size:13px; font-weight:500; color:var(--text-secondary);
+  padding:8px 22px; border-radius:999px; transition:all .2s ease; white-space:nowrap;
+}
+.seg button:hover{ color:var(--text); }
+.seg button.active{ background:var(--text); color:var(--card-bg); box-shadow:0 1px 3px rgba(60,50,30,.2); }
+.sync{ font-size:12px; color:var(--text-secondary); font-family:var(--mono); display:flex; align-items:center; gap:7px; }
+.sync .dot{ width:7px; height:7px; border-radius:50%; background:var(--pine); }
+.tagline{
+  position:absolute; left:50%; transform:translateX(-50%);
+  font-size:12px; letter-spacing:.14em; color:var(--text-tertiary);
+  font-family:var(--mono); white-space:nowrap; pointer-events:none;
+}
+
+/* ===== 主体 ===== */
+main{ max-width:1140px; width:100%; margin:0 auto; padding:44px 28px 116px; flex:1; /* flex:1 让 footer 沉底；底部留白避让浮动 Tab */ }
+.page-head h1{ font-size:28px; font-weight:700; letter-spacing:-.01em; }
+.page-head p{ margin-top:6px; font-size:14px; color:var(--text-secondary); }
+.view{ animation:rise .35s cubic-bezier(.22,.8,.32,1); }
+@keyframes rise{ from{ opacity:0; transform:translateY(8px);} to{ opacity:1; transform:none;} }
+@media (prefers-reduced-motion:reduce){ .view{ animation:none; } *{ transition:none !important; } }
+
+.card{
+  background:var(--card-bg); border:1px solid var(--border);
+  border-radius:var(--radius); box-shadow:var(--shadow);
+}
+
+/* ---- 概览：统计卡 ---- */
+.stats-grid{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  gap:16px; margin-top:28px;
+}
+.stat{ padding:20px 22px; }
+.stat .k{ font-size:12.5px; color:var(--text-secondary); }
+.stat .v{ margin-top:8px; font-size:34px; font-weight:700; font-family:var(--mono); letter-spacing:-.02em; }
+.stat .v.danger{ color:var(--cinnabar); }
+.stat .s{ margin-top:6px; font-size:12px; color:var(--text-tertiary); }
+
+/* ---- 概览：两面板 ---- */
+.panels{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+.panel{ padding:20px 22px; }
+.panel h3{ font-size:14px; font-weight:600; }
+.bar-row{ display:flex; align-items:center; gap:12px; margin-top:14px; font-size:12.5px; }
+.bar-row .name{ width:52px; color:var(--text-secondary); white-space:nowrap; }
+.bar-row .track{ flex:1; height:8px; border-radius:99px; background:rgba(90,78,55,.10); overflow:hidden; }
+.bar-row .fill{ display:block; height:100%; border-radius:99px; background:var(--c,var(--accent)); transition:width .5s ease; }
+.bar-row .n{ width:30px; text-align:right; font-family:var(--mono); color:var(--text); }
+.rank-row .name{ width:92px; overflow:hidden; text-overflow:ellipsis; }
+
+/* ---- 消息审计 ---- */
+.filters{ display:flex; gap:8px; flex-wrap:wrap; margin:24px 0 14px; }
+.chip{
+  border:1px solid var(--border); background:var(--card-bg); color:var(--text-secondary);
+  font:inherit; font-size:12.5px; font-weight:500; cursor:pointer;
+  padding:6px 14px; border-radius:999px; transition:all .18s ease;
+}
+.chip:hover{ border-color:var(--border-strong); color:var(--text); }
+.chip.on{ background:var(--chip-c,var(--text)); border-color:var(--chip-c,var(--text)); color:#fff; }
+
+.msg-list{ overflow:hidden; }
+.msg{
+  display:grid; grid-template-columns:120px 88px 1fr auto; gap:16px; align-items:center;
+  padding:14px 22px; border-bottom:1px solid var(--border);
+}
+.msg:last-child{ border-bottom:0; }
+.msg:hover{ background:rgba(176,122,43,.05); }
+.msg .time{ font-family:var(--mono); font-size:12px; color:var(--text-tertiary); }
+.badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:600; padding:3px 10px; border-radius:6px;
+  color:var(--bc); background:color-mix(in srgb, var(--bc) 10%, var(--card-bg)); white-space:nowrap;
+}
+.msg .subj{ font-size:13.5px; font-weight:500; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.msg .subj .ref{ color:var(--plum); font-size:11.5px; font-family:var(--mono); margin-left:8px; }
+.msg .route{ font-size:12px; color:var(--text-secondary); font-family:var(--mono); white-space:nowrap; }
+.msg .route i{ font-style:normal; color:var(--text-tertiary); margin:0 4px; }
+.empty{ padding:34px; text-align:center; color:var(--text-tertiary); font-size:13px; }
+
+/* ---- 任务看板 ---- */
+#view-kanban{ display:flex; flex-direction:column;
+  height:calc(100dvh - 60px - 44px - 116px);      /* 顶栏 + main 上padding + 底部浮动区留白 */
+}
+#view-kanban[hidden]{ display:none; }              /* 覆盖 author 样式对 hidden 的屏蔽 */
+#view-kanban .kanban{ flex:1; min-height:0; }
+.kanban{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-top:24px; align-items:stretch; }
+.kcol{
+  background:var(--card-bg-subtle); border:1px solid var(--border); border-radius:var(--radius);
+  padding:10px; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+  scrollbar-width:thin; scrollbar-color:rgba(90,78,55,.28) transparent;
+}
+.kcol::-webkit-scrollbar{ width:6px; }
+.kcol::-webkit-scrollbar-thumb{ background:rgba(90,78,55,.25); border-radius:99px; }
+.kcol h3{
+  display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600; padding:4px 6px 10px;
+}
+.kcol h3 .sw{ width:8px; height:8px; border-radius:3px; background:var(--kc); }
+.kcol h3 .cnt{ margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--text-tertiary); }
+.kcard{
+  background:var(--card-bg); border:1px solid var(--border); border-radius:10px;
+  padding:12px 13px; margin-bottom:8px; box-shadow:0 1px 2px rgba(60,50,30,.05);
+  transition:transform .18s ease, box-shadow .18s ease;
+}
+.kcard:hover{ transform:translateY(-2px); box-shadow:0 5px 14px rgba(60,50,30,.10); }
+.kcard .id{ font-family:var(--mono); font-size:11px; color:var(--kc); font-weight:600; }
+.kcard .tt{ font-size:13px; font-weight:500; margin-top:3px; }
+.kcard .meta{ margin-top:8px; display:flex; justify-content:space-between; font-size:11px; color:var(--text-tertiary); font-family:var(--mono); }
+.kcard .blk{ margin-top:8px; font-size:11px; font-family:var(--mono); color:var(--cinnabar); }
+
+@media (max-width:960px){
+  .tagline{ display:none; }
+  .kanban{ grid-template-columns:repeat(2,1fr); }
+  #view-kanban{ height:auto; }
+  .kcol{ max-height:52vh; }
+  .panels{ grid-template-columns:1fr; }
+  .msg{ grid-template-columns:96px 1fr; grid-template-rows:auto auto; row-gap:4px; }
+  .msg .route{ grid-column:2; }
+}
+@media (max-width:640px){
+  .kanban{ grid-template-columns:1fr; }
+  .topbar{ padding:0 16px; }
+  .brand span.name{ display:none; }
+  main{ padding:32px 16px 116px; }
+  .seg button{ padding:8px 15px; font-size:12.5px; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="name">Message Board</span><span class="pill">Audit View</span></div>
+  <div class="tagline">多人协作工作台 · Dashboard</div>
+  <div class="sync"><span class="dot"></span>同步于 <span id="snap-time">—</span></div>
+</header>
+
+<main>
+  <!-- 全局概览 -->
+  <section id="view-stats" class="view">
+    <div class="page-head">
+      <h1>全域协作概览</h1>
+      <p>基于 Git 真实通信史与任务契约实时派生的审计视图</p>
+    </div>
+    <div class="stats-grid" id="stats-grid"></div>
+    <div class="panels">
+      <div class="card panel">
+        <h3>任务五态分布</h3>
+        <div id="state-bars"></div>
+      </div>
+      <div class="card panel">
+        <h3>协作活跃度排行（收发信件）</h3>
+        <div id="rank-bars"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 消息审计 -->
+  <section id="view-messages" class="view" hidden>
+    <div class="page-head">
+      <h1>消息审计</h1>
+      <p>全部公文的收发流水与 ref 追溯链，可按公文类型筛选</p>
+    </div>
+    <div class="filters" id="msg-filters"></div>
+    <div class="card msg-list" id="msg-list"></div>
+  </section>
+
+  <!-- 任务看板 -->
+  <section id="view-kanban" class="view" hidden>
+    <div class="page-head">
+      <h1>任务看板</h1>
+      <p>全员任务包按五态分列，阻塞项标明 blocked_by 依赖</p>
+    </div>
+    <div class="kanban" id="kanban"></div>
+  </section>
+</main>
+
+<nav class="seg" role="tablist" aria-label="视图切换">
+  <button data-view="stats" class="active" role="tab">全局概览</button>
+  <button data-view="messages" role="tab">消息审计</button>
+  <button data-view="kanban" role="tab">任务看板</button>
+</nav>
+<script src="app.js"></script>
+</body>
+</html>
