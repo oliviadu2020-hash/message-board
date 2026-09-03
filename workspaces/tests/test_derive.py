@@ -91,6 +91,16 @@ def test_render_ledger_columns(fake_ws):
     assert "协同单A" in md and "bob" in md and "协同单" in md
 
 
+def test_render_ledger_desc_by_time(fake_ws):
+    """台账必须按时间倒序（PRD: 按时间倒序列出每封信）。"""
+    older = {"user": "alice", "date": "2026-09-02 09:00:00 +0800",
+             "from": "bob", "type": "邮件", "subject": "旧信", "ref": None}
+    newer = {"user": "alice", "date": "2026-09-03 09:00:00 +0800",
+             "from": "bob", "type": "邮件", "subject": "新信", "ref": None}
+    md = derive.render_ledger([older, newer])
+    assert md.index("新信") < md.index("旧信"), "最新信件应排最前"
+
+
 def test_render_task_board_has_five_columns(fake_ws):
     tasks = derive.scan_tasks(fake_ws)
     md = derive.render_task_board(tasks)

@@ -103,11 +103,12 @@ def scan_tasks(workspaces_dir: Path) -> list[dict]:
 
 
 def render_ledger(messages: list[dict]) -> str:
-    """单个用户的通知台账 Markdown。入参为该用户收件的消息列表。"""
-    if not messages:
+    """单个用户的通知台账 Markdown。入参为该用户收件的消息列表，按时间倒序渲染。"""
+    ordered = sorted(messages, key=lambda m: m.get("date", ""), reverse=True)
+    if not ordered:
         return "暂无往来记录\n"
     lines = ["|时间|发件人|类型|标题|ref 链路|", "|----|------|----|----|--------|"]
-    for m in messages:
+    for m in ordered:
         ref = f"↩ {m['ref']}" if m.get("ref") else ""
         lines.append(f"|{_msg_display_time(m['date'])}|{m['from']}|{m['type']}|{m['subject']}|{ref}|")
     return "\n".join(lines) + "\n"
