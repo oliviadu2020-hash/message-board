@@ -122,7 +122,8 @@ def parse_message(text: str) -> dict:
     return fm
 
 
-def build_message(from_user: str, to_list: list[str], subject: str, body: str) -> str:
+def build_message(from_user: str, to_list: list[str], subject: str, body: str,
+                  mtype: str = "邮件", ref: str | None = None) -> str:
     now = datetime.now(timezone.utc).astimezone()
     date_str = now.strftime("%Y-%m-%d %H:%M:%S %z")
     fm = {
@@ -130,7 +131,10 @@ def build_message(from_user: str, to_list: list[str], subject: str, body: str) -
         "to": to_list,
         "date": date_str,
         "subject": subject,
+        "type": mtype,
     }
+    if ref:
+        fm["ref"] = ref
     fm_text = yaml.safe_dump(fm, allow_unicode=True, sort_keys=False)
     return f"{FRONTMATTER_SEP}\n{fm_text}{FRONTMATTER_SEP}\n{body.rstrip()}\n"
 
@@ -209,9 +213,20 @@ def cmd_write(args: argparse.Namespace) -> None:
     if not subject:
         die("--subject 不能为空")
 
+    # --- 公文类型与应答链校验 ---
+    mtype = args.type or "邮件"
+    if mtype not in ("邮件", "协同单", "回执", "退回"):
+        die(f"--type 非法: {mtype},合法值为 邮件/协同单/回执/退回")
+    if mtype in ("回执", "退回"):
+        if not args.ref:
+            die(f"--type {mtype} 必须同时传 --ref 指向原协同单文件名")
+        origin = WORKSPACES_DIR / from_user / "inbox" / args.ref
+        if not origin.exists():
+            die(f"--ref 指向的协同单不存在: {args.ref}")
+
     git_pull()
 
-    message = build_message(from_user, to_list, subject, body)
+    message = build_message(from_user, to_list, subject, body, mtype=mtype, ref=args.ref)
     fname = message_filename(from_user)
 
     written: list[Path] = []
@@ -283,6 +298,9 @@ def main() -> None:
     p_write.add_argument("--content", help="正文文本")
     p_write.add_argument("--file", help="从文件读取正文")
     p_write.add_argument("--subject", required=True, help="邮件主题")
+    p_write.add_argument("--type", choices=["邮件", "协同单", "回执", "退回"],
+                         default="邮件", help="公文类型: 邮件/协同单/回执/退回")
+    p_write.add_argument("--ref", help="应答原协同单文件名(回执/退回必填)")
 
     p_check = sub.add_parser("check", help="列出未读消息")
     p_check.add_argument("--fmt", choices=["markdown", "json"], default="markdown")
