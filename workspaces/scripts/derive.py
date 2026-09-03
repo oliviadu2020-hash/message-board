@@ -213,6 +213,9 @@ def main() -> None:
     p_render.add_argument("--data-json", help="data.json 输出路径(不传则不输出)")
 
     p_lint = sub.add_parser("lint", help="CI lint(见 Task 6)")
+    p_lint.add_argument("--base", help="起始 rev(默认 HEAD)")
+    p_lint.add_argument("--head", help="结束 rev(默认 HEAD)")
+    p_lint.add_argument("--repo-root", help="仓库根(默认取 sync.REPO_ROOT)")
 
     args = parser.parse_args()
     if args.cmd == "render":
