@@ -58,7 +58,15 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 - **协作首先要有各自的地盘**。多人一起工作，第一要求是隔离：每个人收的信、写的草稿、记的日志都不能和别人混在一起。于是有了 `workspaces/<user>/`——每位协作者一个独立文件夹，互不干扰。
 - **各自的地盘之外，还需要一个公共区域**。讨论出的共识（方案定稿、决议）不属于任何个人，必须有个大家都认可的地方沉淀。于是有了 `share/`——共享文件区。
 - **协作者之间要通信，信要有去处**。想通知某位同事，得有一个"投到他家门口"的地方。于是每个用户目录下有了 `inbox/`（收件箱）；配套地，写信前的草稿放自己 `workspace/`，每天做过什么记进自己的 `log.md`。
-- **通信不能靠手搓文件**。写信、查信、读信这些动作，如果让每个 AI 自由发挥，格式很快就会乱掉。于是把所有通信动作收敛到一个投递引擎：`workspaces/scripts/sync.py`。
+- **信不能只有一种，得讲"公文类型"**。"同步个情况"和"派件活给你"是两种完全不同的事：前者看一眼就过，后者需要应答、需要跟踪闭环。于是信被分成四种公文类型——**邮件**（普通同步）、**协同单**（派活）、**回执**（接受或完成后的应答）、**退回**（不接这单并说明原因）；回执与退回必须带 `ref` 指向原协同单，应答链才断不了。
+- **派出去的活要有地方"挂着"**。协同单发出去之后，"这事做到哪一步了"不能靠脑记。于是每个用户目录下有了 `tasks/`（任务包）：一个任务一个文件夹，里面一张 `task.yaml` 记录五态之一（未开始 / 进行中 / 阻塞 / 待确认 / 已完成）和阻塞原因，任务的草稿、产出也随包携带。
+- **大家交上来的状态，要有一个"公示栏"**。各自的 inbox 和 tasks 是原始凭证，但"全组现在什么样"需要一个聚合视图。这个聚合只能有一个写手（否则互相覆盖、口径打架），于是引入了 CI 治理：`.github/workflows/board.yml` 充当"邮局分拣中心"，push 后自动聚合、渲染、质检、发布。它的产出有两份：给人和 Agent 在仓库里看的 `board/`（通知台账 + 任务看板，Markdown 版），和对外演示用的 `site/`（审计网页，挂 github.io）。
+- **通信和任务动作都不能靠手搓文件**。写信、查信、读信、建任务、改任务状态，如果让每个 AI 自由发挥，格式很快就会乱掉。于是把所有动作收敛到一个投递引擎：`workspaces/scripts/sync.py`。
+
+至此目录结构的骨架已经齐了。但还有两个"让机器转起来"的角色：
+
+- **AI 进门要打卡、要懂规矩**。AI 每轮收到 prompt，得知道"先查一下信箱"，也得知道"收件箱不许直接改"这些铁律。于是有了打卡脚本 `workspaces/hooks/on_prompt.sh`，和给 AI 的入场说明书 `AGENTS.md`。
+- **机器得知道"这台电脑上是谁"**。投递引擎查信前，要先知道查谁的收件箱，于是有了机器本地的 `.current_user`；同理，"哪些信读过了"也是机器本地状态，放在每个用户目录下的 `.sync_seen`。
 
 至此目录结构的骨架已经齐了。但还有两个"让机器转起来"的角色：
 
@@ -71,22 +79,28 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 |---|---|---|
 | 每人一块地盘 | `workspaces/<user>/` | 某个协作者的独立工作区 |
 | 通信要能收信 | `workspaces/<user>/inbox/` | 收件箱：别人写来的信都投在这 |
+| 信要分轻重缓急 | 公文类型 + `ref` | 邮件/协同单/回执/退回；回执退回必须挂住原协同单 |
+| 派活要能追状态 | `workspaces/<user>/tasks/` | 任务包：一事一包，`task.yaml` 记五态与阻塞 |
 | 写信要有草稿区 | `workspaces/<user>/workspace/` | 个人草稿区：写的东西先放这，定稿后再发或沉淀 |
 | 工作要留痕迹 | `workspaces/<user>/log.md` | 个人工作日志：按日期倒序记做了什么 |
 | 已读状态本地维护 | `workspaces/<user>/.sync_seen` | 已读记录：哪些信看过了 |
 | 机器要知道"我是谁" | `workspaces/.current_user` | 本机当前用户：这台电脑上操作的人是谁 |
-| 通信动作要统一 | `workspaces/scripts/sync.py` | 投递引擎：写信、查信、读信的唯一入口 |
+| 通信与任务动作要统一 | `workspaces/scripts/sync.py` | 投递引擎：写信、查信、读信、任务管理的唯一入口 |
+| 全局要有公示栏 | `board/` | 派生区：通知台账 + 任务看板（CI 唯一写手，客户端只读） |
+| 对外要能演示审计 | `site/` + github.io | 审计网页：概览/消息/看板三视图的静态站点 |
+| 派生只能一家写 | `.github/workflows/board.yml` | CI 治理：聚合→渲染→lint→发布的"邮局分拣中心" |
 | AI 进门要打卡 | `workspaces/hooks/on_prompt.sh` | 打卡脚本：AI 每轮提交 prompt 时自动查一下新信 |
 | 共识要有家 | `share/` | 共享区：讨论定稿的文件沉淀到这儿 |
 | AI 要懂规矩 | `AGENTS.md` | 给 AI 的入场说明书：进仓库要遵守哪些铁律 |
 | 新人上手有手册 | `docs/quickstart.md` | 上手指引（给 AI 看，用户说一句"我要加入"，AI 照着做） |
 | 设计要有出处 | `docs/prd.md` | 本设计协议（随模版分发一份） |
+| 引擎要有测试兜着 | `workspaces/tests/` | pytest：投递、任务、派生函数的回归保障 |
 | Claude 专用入口 | `.claude/settings.json`、`CLAUDE.md` | 告诉 Claude Code"进来先打卡、先读 AGENTS.md" |
 | Codex 专用入口 | `.codex/hooks.json` | 告诉 Codex"进来先打卡" |
 | 本地零碎不进共享 | `.gitignore` | 忽略清单：机器本地文件不进入共享 |
 | 工程门面 | `README.md` | 整个工程的说明文件 |
 
-一句话记忆：**workspaces 隔离个人，share 沉淀共识，sync.py 统一通信，AGENTS.md 管规矩，hook 管打卡**。
+一句话记忆：**workspaces 隔离个人，share 沉淀共识，sync.py 统一通信，tasks 追踪状态，board 与 site 公示全局，CI 端唯一写手，AGENTS.md 管规矩，hook 管打卡**。
 
 <details>
 <summary>🔧 技术细节：完整目录树与每一项的用途</summary>
@@ -95,22 +109,34 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 <project_name>/             # 工程根目录
 ├── .claude/settings.json   # Claude UserPromptSubmit hook 配置
 ├── .codex/hooks.json       # Codex UserPromptSubmit hook 配置
+├── .github/workflows/board.yml  # CI 治理 workflow：聚合 → 渲染 → lint → 发布，派生物的唯一写手
 ├── share                   # 共享文件（达成共识的文件存放位置）
 |   └──（自由文件）
+├── board/                  # 派生区·Markdown 版（CI 唯一写手，客户端一律只读）
+│   ├── ledger/<user>.md    # 每人的通知台账：谁给我投过信、类型、还没读哪些
+│   └── task-board.md       # 任务看板：全员工单按状态分列
+├── site/                   # 审计网页前端源码（index.html + app.js，无框架原生 JS）
+│   └──                     #   说明：data.json 由 CI 生成，与发布产物一样不进 git
 ├── workspaces
 │   ├── .current_user       # 保存了本地的用户是谁
 │   ├── <user1>
 │   |   ├── inbox/          # <user1> 的收件箱
+│   |   ├── tasks/          # <user1> 的任务包（每个任务一个目录，经 sync.py task 管理）
+│   |   │   └── <任务名>/
+│   |   │       ├── task.yaml   # 任务状态地基（见「使用规则」）
+│   |   │       └── ...         # 草稿、产出等自由文件
 │   |   ├── .sync_seen      # <user1> 的已读消息记录
-│   |   ├── workspace       # <user1> 的个人工作区（草稿区）
-│   |   └── log.md          # <user1> 的个人工作日志
+|   |   ├── workspace       # <user1> 的个人工作区（草稿区）
+|   |   └── log.md          # <user1> 的个人工作日志
 │   ├── <user2>
 │   |   ├── inbox/          # <user2> 的收件箱
+│   |   ├── tasks/          # <user2> 的任务包
 │   |   ├── .sync_seen      # <user2> 的已读消息记录
-│   |   ├── workspace       # <user2> 的个人工作区（草稿区）
-│   |   └── log.md          # <user2> 的个人工作日志
-│   ├── scripts/sync.py     # workspaces的CLI 引擎（支持邮件的读、写、检查）
+|   |   ├── workspace       # <user2> 的个人工作区（草稿区）
+|   |   └── log.md          # <user2> 的个人工作日志
+│   ├── scripts/sync.py     # workspaces的CLI 引擎（邮件读、写、检查 + 任务管理）
 │   ├── hooks/on_prompt.sh  # UserPromptSubmit hook 的统一入口脚本（自行定位仓库根，不依赖 hook 执行时的 cwd）
+│   ├── tests/              # pytest 测试（含台账/看板生成函数用例）
 │   ├── pyproject.toml      # uv 项目定义
 │   ├── uv.lock             # 依赖锁
 │   └── .python-version     # python 3.12
@@ -128,11 +154,11 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 
 ## 使用规则
 
-前面说的是"有什么"，这一节说"怎么用、守什么规矩"。规则分两层：**三个动作**（写信、查信、读信——所有沟通都收敛到这三个动作上）和**一组场地规矩**（每个目录能干嘛、不能干嘛）。
+前面说的是"有什么"，这一节说"怎么用、守什么规矩"。规则分两层：**四个动作**（写信、查信、读信、管任务——所有沟通与派活都收敛到这四个动作上）和**一组场地规矩**（每个目录能干嘛、不能干嘛）。
 
-### 三个动作
+### 四个动作
 
-用户的所有沟通，最终都被 Agent 翻译成以下三个动作之一。理解这三个动作，就理解了整个产品。
+用户的所有沟通与任务推进，最终都被 Agent 翻译成以下四个动作之一。理解这四个动作，就理解了整个产品。
 
 #### 动作一：写信（write）
 
@@ -140,6 +166,8 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 
 我们给写信定了几条规矩：
 
+- **信分四种公文类型**。**邮件**（默认）：同步情况、发通知，看一眼就过；**协同单**：正式派活给对方，需要应答；**回执**：接受协同单或完成后的应答；**退回**：不接这单，说明原因。类型写在信头上，台账、看板、审计网页都按它分账。
+- **应答必须挂住原单（ref）**。回执和退回必须带上 `--ref` 指向自己收件箱里那张协同单——链不上就直接拒发。这样每张单的"派出 → 应答"成对可查，谁答应了、谁退回了、为什么，全程可追溯。
 - **先取信再投信**。动笔前先把云端的最新内容拉下来，避免在旧版本上工作。
 - **一封信可以同时寄给多人**。同一封信会分别投进每个收件人的收件箱。
 - **投递失败自动重试，但有上限**。极端情况下"投完信同步云端"会被拒（原因：别人抢先同步了新东西），投递引擎会自动重新拉取再同步，最多重试 3 次；超出就报错，交还给 Agent 决定稍后重发——不会无限死磕。
@@ -148,8 +176,10 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 <details>
 <summary>🔧 技术细节：write 命令规范</summary>
 
-`uv run scripts/sync.py write --to {userx},{usery} [--content {md_content} | --file {filename}] --subject {subject}`（运行方式统一为：先 `cd <project>/workspaces`，再 `uv run scripts/sync.py ...`；`uv run` 从当前目录向上发现 `pyproject.toml`，使用 `workspaces/.venv` 环境）
+`uv run scripts/sync.py write --to {userx},{usery} [--content {md_content} | --file {filename}] --subject {subject} [--type {类型}] [--ref {原单文件名}]`（运行方式统一为：先 `cd <project>/workspaces`，再 `uv run scripts/sync.py ...`；`uv run` 从当前目录向上发现 `pyproject.toml`，使用 `workspaces/.venv` 环境）
 
+- `--type` 合法值：`邮件`（默认，不传时等同）/ `协同单` / `回执` / `退回`，写入 frontmatter 的 `type` 字段。协同单 = 派活给对方；回执 = 接受或完成后的应答；退回 = 不接这单并说明原因。
+- `--type 回执` 与 `--type 退回` 必须同时传 `--ref {原单文件名}`（指向自己收件箱里那张协同单的文件名），写入 frontmatter 的 `ref` 字段，以此保证每张单的应答链可追溯；`--ref` 指向的文件在本人 inbox 中不存在时，直接报错退出，不发信。
 - `--content` 与 `--file` 二选一：`--content` 直接传邮件正文文本；`--file` 从文件读取正文。**`--file` 的路径支持绝对路径与相对路径**（相对路径按命令执行时的当前工作目录解析，与 `cat`/`cp` 等 Unix 命令一致）——邮件正文文件可以在仓库之外（例如 Agent 在 `/tmp` 起草的中间稿），只有最终生成的收件箱文件才进入版本库。
 
 执行步骤：
@@ -165,6 +195,8 @@ to:
   - {usery}
 date: YYYY-MM-DD HH:mm:ss Z   # Z 为 UTC 偏移，如 +0800（对应 Python strftime: %Y-%m-%d %H:%M:%S %z）
 subject: {subject}
+type: 邮件 | 协同单 | 回执 | 退回   # 不传 --type 时写「邮件」
+ref: {原单文件名}   # 仅 回执/退回 时存在
 ---
 {md_content（或者是 {filename} 中读取出来的内容）}
 ````
@@ -181,6 +213,8 @@ subject: {subject}
 #### 动作二：查信（check）
 
 这是 Agent 每次"上班打卡"时做的动作：看一下你的收件箱里有没有还没读的信，有就列个清单给你——谁发的、什么时候、什么事。它只是"列清单"，打开信不算读过。
+
+查信结果后面还会附一小段**任务现状**：你手头有几件事在进行中、几件事被卡住、各自在等什么。这样 AI 每天一打卡，既能呈上新信，也能提醒你"上次接的活还没动"。
 
 <details>
 <summary>🔧 技术细节：check 命令规范</summary>
@@ -210,6 +244,18 @@ subject: {subject}
 |from | to |date|subject|
 ```
 
+3. 追加「任务现状」段：统计 `workspaces/{.current_user}/tasks/` 下状态为「进行中」「阻塞」的任务；有阻塞时逐条列出 blocked_by。markdown 示例：
+
+```markdown
+## 任务现状
+- 进行中 2 件 / 阻塞 1 件
+- 阻塞：下单锁库存联调（等 mingyi 回执）
+```
+
+   json 输出增加 `tasks: {in_progress: [...], blocked: [{name, blocked_by}]}`
+
+4. 无未读邮件且「任务现状」为空时，维持原有约定输出固定字符串「暂无未读消息」（入口脚本据此静默）
+
 </details>
 
 #### 动作三：读信（read）
@@ -223,6 +269,55 @@ subject: {subject}
 
 1. 执行 `git pull`
 2. 未指定 {filename}：读取 `workspaces/{.current_user}/inbox` 中所有未读消息（`.sync_seen` 中记录了哪些已读），并将这些消息记入 `.sync_seen` 标记为已读；指定 {filename} 时，直接读取 `workspaces/{.current_user}/inbox/{filename}` 这一封。
+
+</details>
+
+#### 动作四：管任务（task）
+
+信是"沟通"，任务就是"沟通之后的活"。协同单接下来了，总得有个地方挂着它、追到它闭环。**任务包**就是干这个的：一个任务一个文件夹（在自己目录的 `tasks/` 下），里面一张 `task.yaml` 记录状态，还有这个任务的草稿、产出文件。
+
+任务的状态被收敛成**五态**——这是它和看板、审计网页对齐的"普通话"，谁都不能造第六个词：
+
+| 状态 | 含义 | 什么时候用 |
+|---|---|---|
+| 未开始 | 接了单还没动工 | 刚建任务时默认就是它 |
+| 进行中 | 正在做 | 动工了 |
+| 阻塞 | 卡住了，在等别人 | 配合 `blocked_by` 写清"等什么"，如「等 bob 回执」 |
+| 待确认 | 自认为做完了，等对方确认 | 交付了协同单要的产出 |
+| 已完成 | 对方确认收下，闭环 | 收到回执后收尾 |
+
+规矩和收件箱类似：**状态变更必须通过投递引擎**（`sync.py task create / update`），只能动自己目录下的任务包；包里 `task.yaml` 以外的一切（草稿、产出）自由编辑、引擎不管。任务从哪里来？通常是一张协同单——建任务时可以用 `--from` 记下游单，这样"哪张单派出了哪个活"也能对上。
+
+<details>
+<summary>🔧 技术细节：task 命令规范与 task.yaml</summary>
+
+建任务 `uv run scripts/sync.py task create --name {任务名} [--from {协同单文件名}]`：
+
+1. 执行 `git pull`
+2. 创建 `tasks/{任务名}/` 目录并写入 `task.yaml`（status 初始为「未开始」；传了 --from 则记录上游协同单路径）
+3. 同名目录已存在时报错退出（提示先 `task list` 看现状）
+4. 执行 `git add -> commit -> push`
+
+更新任务 `uv run scripts/sync.py task update --name {任务名} [--status {状态}] [--blocked {阻塞说明}]`：
+
+1. 执行 `git pull`；任务不存在时报错退出
+2. `--status` 只允许五态之一：`未开始 / 进行中 / 阻塞 / 待确认 / 已完成`，传其他值报错退出并列出合法值
+3. 更新 `task.yaml` 的 status / blocked_by，`updated` 自动落当天日期
+4. 执行 `git add -> commit -> push`
+
+列任务 `uv run scripts/sync.py task list [--fmt json | markdown]`：列本人全部任务包及各自状态。
+
+`task.yaml` schema（任务状态的唯一地基）：
+
+```yaml
+task: 下单锁库存联调
+from: inbox/2026-09-03-10-00-00-+0800-bob.md   # 上游协同单，没有则写「无」
+status: 进行中      # 五态：未开始 / 进行中 / 阻塞 / 待确认 / 已完成
+blocked_by: 无      # status 为「阻塞」时写等什么，如「等 bob 回执」
+updated: 2026-09-03
+```
+
+只能在自己目录下建/改任务；他人 `workspaces/<user>/` 一切只读。任务状态词汇必须收敛到五态——聚合看板依赖枚举一致性，手写第六个词会被 CI lint 标红。刻意不做「收工四件套」式的纪律（过程记录、日志强制四连）：log.md 维持现有手工约定，不加重。
 
 </details>
 
@@ -296,6 +391,58 @@ workspaces/*/.sync_seen
 剩下所有事——写入用户名、建收件箱、建草稿区、记第一笔日志、同步云端、发一封欢迎信给自己验证链路——**全部由 Agent 照着手册做完**。手册就是 `docs/quickstart.md`，是给 AI 看的，不是给你看的；但你要信任它（我们让 Agent 必须引用它，不许凭记忆自由发挥）。
 
 **用户名约定**：全小写英文或拼音（避免中文名在文件名、git、跨平台兼容上的坑）。
+
+---
+
+## 公示栏与审计网页：全局视图从哪来
+
+到这一步，每个协作者的信和任务都规规矩矩躺在仓库里了。但**站在全组视角看"现在什么样"**，还需要一层东西——这就是 `board/`（派生区）和 `site/`（审计网页）要解决的问题。
+
+**通知台账有什么用？** 想象你是团队的 PM，你想知道的不是"alice 的 inbox 里有哪 37 个文件"，而是：还有哪些协同单没人应答？谁手头阻塞最多？这周跨组的往来密不密？通知台账（`board/ledger/<user>.md`）就是把每个人的收件箱元数据按人装订成册——谁给我投过信、什么类型、日期、挂的是哪张单、还没读哪些。它不是新信息，而是把散落各处的原始凭证**聚合成能一眼扫读的"公文流转总账"**。任务看板（`board/task-board.md`）同理：把全组的 `task.yaml` 按五态分列排开。
+
+**谁来写这个公示栏？——只有 CI。** 这是权责设计上很硬的一条：派生区是"读模型"，原始凭证（inbox、task.yaml）才是"写模型"。如果允许每个客户端自己也去改台账，口径必然打架。所以我们让 GitHub Actions（`board.yml`）当唯一的"邮局分拣中心"：push 到 main 后自动做五步——**聚合**（扫全部信头与任务）→ **渲染 Markdown 派生区** → **渲染网页数据** → **lint 质检**（绕过引擎写信、状态造出第六个词、手改派生区，一律标红但不动文件）→ **发布**（Markdown 回提仓库、网页挂上 github.io）。代价是 30~90 秒延迟；审计看的是"发生过什么"，分钟级延迟完全可以接受，秒级实时不是这个架构的目标。
+
+**审计网页（github.io）是本系统的对外主视图。** 它和 Markdown 台账共用同一份聚合数据（`data.json`），但穿上了一件"给演示和审计看"的外衣，三个视图：
+
+- **全局概览**：信件流通总量、协同单闭环率、活跃任务、受阻事项——演示时开场先把这张甩出来
+- **消息审计**：全部公文的收发流水与 ref 应答链，可按类型筛选
+- **任务看板**：全员任务五态分列，阻塞项标明被什么卡住
+
+网页只展示元数据（谁发给谁、什么类型、什么状态），不含信件正文；正文回仓库看。这样做还有个现实好处：**github.io 托管的是脱敏后的聚合产物**，原始讨论内容不离开仓库。
+
+<details>
+<summary>🔧 技术细节：CI 流程、派生区与审计网页规范</summary>
+
+**CI 治理（`.github/workflows/board.yml`）**——托管仓没有服务端 hook，用它顶替「邮局分拣中心」
+
+- 触发：push 到 main；防环条件 `if: github.actor != 'github-actions[bot]'`
+- 五个步骤：
+  1. **聚合**：扫所有 inbox frontmatter + 所有 task.yaml → 生成聚合数据（Python 函数，与 sync.py 共用）
+  2. **渲染 Markdown**：聚合数据 → `board/ledger/<user>.md` + `board/task-board.md`
+  3. **渲染网页产物**：聚合数据 → `data.json`；与 `site/` 静态前端一起打成 Pages 产物（yaml 解析失败的任务照常进数据、缺字段留空，不让单个坏文件阻塞构建）
+  4. **lint**：发现违规即 workflow 失败标红，但不改任何文件：
+     - 非 sync.py 提交记录中改动了 `workspaces/*/inbox/`（绕过投递引擎）
+     - `task.yaml` 的 status 不在五态枚举内
+     - 非 board-bot 提交改动了 `board/`
+  5. **发布**：Markdown 产物如有变化，以 board-bot 身份提交回仓库（commit message 前缀固定 `[board-bot]`，push 撞车 `git pull --rebase` 重试一次）；网页产物 `deploy-pages` 发布上线
+- 现实妥协（写进文档让人知情）：延迟 30~90 秒（Actions 排队），换来派生区绝对单写；lint 只能事后标红，做不到自建 git pre-receive 那种当场拦截；不强开 branch protection，以免「每写一封信都要等 CI 绿」
+
+**派生区（`board/`）**——CI 唯一写手，客户端一律只读
+
+- `board/ledger/<user>.md`（通知台账）：由 CI 从各用户 inbox 的 frontmatter 派生，按时间倒序列出每封信的发件人、日期、type、subject、ref 链路
+- `board/task-board.md`（任务看板）：由 CI 聚合所有 `workspaces/*/tasks/*/task.yaml`，按五个状态分列，每行含任务名、owner、from 上游、blocked_by
+- 派生文件的境地：改了也没用——下次 CI 重建会被覆盖；本地修改 board/ 属 lint 违规
+- 台账与看板是「读模型」：丢失可随时从 inbox + task.yaml 全量重建，无独立信息价值
+
+**审计网页（github.io 静态站点）**——数据与 Markdown 版同源
+
+- 产物三件套（由 `board.yml` 生成，经 `actions/upload-pages-artifact` + `actions/deploy-pages` 发布，**不进 git 仓库**）：
+  1. `data.json`：全量审计数据——所有信件的 frontmatter 元数据 + 所有任务
+  2. `site/index.html`：单页应用入口，自包含样式
+  3. `site/app.js`：原生 JS，无框架；fetch 一律用相对路径（站点挂在 `/message-board/` 子路径下，绝对路径会 404）；`data.json` 加载失败时回退内置演示数据 `MOCK_DATA`，保证本地双击也能完整预览
+- 前置手工步骤（仅一次）：仓库 Settings → Pages → Source 选 "GitHub Actions"
+
+</details>
 
 ---
 
@@ -414,17 +561,22 @@ EOF
 4. 达成共识的产出（方案、决议、规范）必须沉淀到 `share/`，不要只留在邮件或对话里。
 5. 重要工作在当前用户 `workspaces/<user>/log.md` 追加日志（按日期倒序，格式见工作日志的建议模板）。
 6. 当前用户身份记录在本机的 `workspaces/.current_user`，sync.py 会读取它；不要改动他人目录下的 `.sync_seen`。
+7. `board/` 是 CI 自动重建的派生区，只读不改。
+8. 任务状态变更一律用 `sync.py task` 完成；只能动自己 `workspaces/<自己>/` 下的文件，他人目录一律只读。
 
 ## 新邮件提醒（UserPromptSubmit 时机）
 
 每轮用户提交 prompt 时，UserPromptSubmit hook 自动执行 `sync.py check`，把未读邮件摘要作为附加上下文送进来。
-若摘要非空：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信。摘要为空则正常继续，不必提及。
+若摘要非空：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信（应答协同单时用 `--type 回执/退回 --ref <原单>`）。摘要与任务现状均为空则正常继续，不必提及。
 
 ## 常用命令（在 `<project>/workspaces` 下运行）
 
-- 查未读：`uv run scripts/sync.py check`（hook 已自动执行）
+- 查未读 + 任务现状：`uv run scripts/sync.py check`（hook 已自动执行）
 - 读全文：`uv run scripts/sync.py read [--filename <name>]`
-- 写信：`uv run scripts/sync.py write --to <user>[,<user2>...] --subject "..." (--content "..." | --file <path>)`
+- 写信：`uv run scripts/sync.py write --to <user>[,<user2>...] --subject "..." [--type 协同单|回执|退回 --ref <原单文件名>] (--content "..." | --file <path>)`
+- 建任务：`uv run scripts/sync.py task create --name <任务名> [--from <协同单文件名>]`
+- 更新任务：`uv run scripts/sync.py task update --name <任务名> [--status 状态] [--blocked 说明]`
+- 列任务：`uv run scripts/sync.py task list`
 
 ## 新用户加入与初始化
 
@@ -563,22 +715,34 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
 <project_name>/             # 工程根目录
 ├── .claude/settings.json   # Claude UserPromptSubmit hook 配置
 ├── .codex/hooks.json       # Codex UserPromptSubmit hook 配置
+├── .github/workflows/board.yml  # CI 治理 workflow：聚合 → 渲染 → lint → 发布，派生物的唯一写手
 ├── share                   # 共享文件（达成共识的文件存放位置）
 |   └──（自由文件）
+├── board/                  # 派生区·Markdown 版（CI 唯一写手，客户端一律只读）
+│   ├── ledger/<user>.md    # 每人的通知台账：谁给我投过信、类型、还没读哪些
+│   └── task-board.md       # 任务看板：全员工单按状态分列
+├── site/                   # 审计网页前端源码（index.html + app.js，无框架原生 JS）
+│   └──                     #   说明：data.json 由 CI 生成，与发布产物一样不进 git
 ├── workspaces
 │   ├── .current_user       # 保存了本地的用户是谁
 │   ├── <user1>
 │   |   ├── inbox/          # <user1> 的收件箱
+│   |   ├── tasks/          # <user1> 的任务包（每个任务一个目录，经 sync.py task 管理）
+│   |   │   └── <任务名>/
+│   |   │       ├── task.yaml   # 任务状态地基（见「设计规则」）
+│   |   │       └── ...         # 草稿、产出等自由文件
 │   |   ├── .sync_seen      # <user1> 的已读消息记录
 |   |   ├── workspace       # <user1> 的个人工作区（草稿区）
 |   |   └── log.md          # <user1> 的个人工作日志
 │   ├── <user2>
 │   |   ├── inbox/          # <user2> 的收件箱
+│   |   ├── tasks/          # <user2> 的任务包
 │   |   ├── .sync_seen      # <user2> 的已读消息记录
 |   |   ├── workspace       # <user2> 的个人工作区（草稿区）
 |   |   └── log.md          # <user2> 的个人工作日志
-│   ├── scripts/sync.py     # workspaces的CLI 引擎（支持邮件的读、写、检查）
+│   ├── scripts/sync.py     # workspaces的CLI 引擎（邮件读、写、检查 + 任务管理）
 │   ├── hooks/on_prompt.sh  # UserPromptSubmit hook 的统一入口脚本（自行定位仓库根，不依赖 hook 执行时的 cwd）
+│   ├── tests/              # pytest 测试（含台账/看板生成函数用例）
 │   ├── pyproject.toml      # uv 项目定义
 │   ├── uv.lock             # 依赖锁
 │   └── .python-version     # python 3.12
@@ -599,7 +763,9 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
   - 读：`uv run scripts/sync.py read [--filename {filename}]`：
     1. 执行`git pull`
     2. 如果没有指定{filename}，则读取`workspaces/{.current_user}/inbox`中所有未读消息（`workspaces/{.current_user}/.sync_seen`中记录了哪些消息已读），并且将这封消息记录到`workspaces/{.current_user}/.sync_seen`中标记为已读；如果指定了{filename}，则直接读取workspaces/{.current_user}/inbox/{filename}这个消息
-  - 写 `uv run scripts/sync.py write --to {userx},{usery} [--content {md_content} | --file {filename}] --subject {subject}`：
+  - 写 `uv run scripts/sync.py write --to {userx},{usery} [--content {md_content} | --file {filename}] --subject {subject} [--type {类型}] [--ref {原单文件名}]`：
+    - `--type` 合法值：`邮件`（默认，不传时等同）/ `协同单` / `回执` / `退回`，写入 frontmatter 的 `type` 字段。协同单 = 派活给对方；回执 = 接受或完成后的应答；退回 = 不接这单并说明原因
+    - `--type 回执` 与 `--type 退回` 必须同时传 `--ref {原单文件名}`（指向自己收件箱里那张协同单的文件名），写入 frontmatter 的 `ref` 字段，以此保证每张单的应答链可追溯；`--ref` 指向的文件在本人 inbox 中不存在时，直接报错退出，不发信
     - `--content` 与 `--file` 二选一：`--content` 直接传邮件正文文本；`--file` 从文件读取正文。**`--file` 的路径支持绝对路径与相对路径**（相对路径按命令执行时的当前工作目录解析，与 `cat`/`cp` 等 Unix 命令一致）——邮件正文文件可以在仓库之外（例如 Agent 在 `/tmp` 起草的中间稿），只有最终生成的收件箱文件才进入版本库
     1. 执行`git pull`
     2. 基于{subject}中的内容和{md_content}(或者{filename}中读取出来的内容)构建要发送的markdown文件：格式为：
@@ -611,6 +777,8 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
       - {usery}
     date: YYYY-MM-DD HH:mm:ss Z   # Z 为 UTC 偏移，如 +0800（对应 Python strftime: %Y-%m-%d %H:%M:%S %z）
     subject: {subject}
+    type: 邮件 | 协同单 | 回执 | 退回   # 不传 --type 时写「邮件」
+    ref: {原单文件名}   # 仅 回执/退回 时存在
     ---
     {md_content(或者是{filename}中读取出来的内容)}
     ```
@@ -637,7 +805,89 @@ AI 助手（Agent）的普及带来了一个新变化：团队里多了一类"�
       |-----|-----|---|----|
       |from | to |date|subject|
       ```
+    3. 追加「任务现状」段：统计 `workspaces/{.current_user}/tasks/` 下状态为「进行中」「阻塞」的任务；有阻塞时逐条列出 blocked_by。markdown 示例：
+      ```markdown
+      ## 任务现状
+      - 进行中 2 件 / 阻塞 1 件
+      - 阻塞：下单锁库存联调（等 mingyi 回执）
+      ```
+      json 输出增加 `tasks: {in_progress: [...], blocked: [{name, blocked_by}]}`
+    4. 无未读邮件且「任务现状」为空时，维持原有约定输出固定字符串「暂无未读消息」（入口脚本据此静默）
+  - 任务管理 `task` 子命令组（操作本人 `workspaces/{.current_user}/tasks/` 下的任务包）：
+    - 建任务 `uv run scripts/sync.py task create --name {任务名} [--from {协同单文件名}]`：
+      1. 执行 `git pull`
+      2. 创建 `tasks/{任务名}/` 目录并写入 `task.yaml`（status 初始为「未开始」；传了 --from 则记录上游协同单路径）
+      3. 同名目录已存在时报错退出（提示先 `task list` 看现状）
+      4. 执行 `git add -> commit -> push`
+    - 更新任务 `uv run scripts/sync.py task update --name {任务名} [--status {状态}] [--blocked {阻塞说明}]`：
+      1. 执行 `git pull`；任务不存在时报错退出
+      2. `--status` 只允许五态之一：`未开始 / 进行中 / 阻塞 / 待确认 / 已完成`，传其他值报错退出并列出合法值
+      3. 更新 `task.yaml` 的 status / blocked_by，`updated` 自动落当天日期
+      4. 执行 `git add -> commit -> push`
+    - 列任务 `uv run scripts/sync.py task list [--fmt json | markdown]`：列本人全部任务包及各自状态
+    - 任务包内 `task.yaml` 以外的文件（草稿、产出等）为自由文件，sync.py 不管
 
+
+- **任务包（`workspaces/<user>/tasks/<任务名>/`）**
+  - 任务名即目录名，与 `task.yaml` 的 `task` 字段一致
+  - `task.yaml` 是任务状态的唯一地基，schema 如下：
+    ```yaml
+    task: 下单锁库存联调
+    from: inbox/2026-09-03-10-00-00-+0800-bob.md   # 上游协同单，没有则写「无」
+    status: 进行中      # 五态：未开始 / 进行中 / 阻塞 / 待确认 / 已完成
+    blocked_by: 无      # status 为「阻塞」时写等什么，如「等 bob 回执」
+    updated: 2026-09-03
+    ```
+  - `task.yaml` 只通过 `sync.py task create / update` 变更；包内其余文件自由编辑
+  - 只能在自己目录下建/改任务；他人 `workspaces/<user>/` 一切只读
+  - 任务状态词汇必须收敛到五态——聚合看板依赖枚举一致性，手写第六个词会被 CI lint 标红
+  - 刻意不做「收工四件套」式的纪律（过程记录、日志强制四连）：log.md 维持现有手工约定，不加重
+
+- **派生区（`board/`）**——CI 唯一写手，客户端一律只读
+  - `board/ledger/<user>.md`（通知台账）：由 CI 从各用户 inbox 的 frontmatter 派生，按时间倒序列出每封信的发件人、日期、type、subject、ref 链路
+  - `board/task-board.md`（任务看板）：由 CI 聚合所有 `workspaces/*/tasks/*/task.yaml`，按五个状态分列，每行含任务名、owner、from 上游、blocked_by
+  - Markdown 版的读者是 clone 仓的人和 Agent；网页是另一份渲染产物（见「审计网页」），两者共用同一份聚合数据，口径永远一致
+  - 派生文件的境地：改了也没用——下次 CI 重建会被覆盖；本地修改 board/ 属 lint 违规
+  - 台账与看板是「读模型」：丢失可随时从 inbox + task.yaml 全量重建，无独立信息价值
+
+- **审计网页（github.io 静态站点）**——本系统的对外主视图，数据与 Markdown 版同源
+  - 产物三件套（由 `board.yml` 在 CI 内生成，经 `actions/upload-pages-artifact` + `actions/deploy-pages` 发布到 GitHub Pages，**不进 git 仓库**——仓库历史只留人写的东西，生成物活在 CI 产物与 Pages 托管层）：
+    1. `data.json`：全量审计数据——所有信件的 frontmatter 元数据（from/to/date/subject/type/ref）+ 所有任务（task 名/owner/status/blocked_by/updated/from），Markdown 台账与看板也由它二次渲染
+    2. `site/index.html`：单页应用入口，自包含样式
+    3. `site/app.js`：原生 JS，无框架（演示系统要能离线读源码）；fetch 一律用相对路径（站点挂在 `/message-board/` 子路径下，绝对路径会 404）
+  - 三个视图（底部浮动 Tab 切换，URL Hash 深链 `#view=stats|messages|kanban`）：
+    - **全局概览**：信件流通总量、协同单闭环率、活跃协作任务、受阻事项四张统计卡，外加「任务五态分布」「协作活跃度排行（收发信件）」两组横向条形图——给演示的总览开场用
+    - **消息审计**：全部信件元数据流水列表，可按公文类型（邮件/协同单/回执/退回）筛选，行内显示 ref 应答链引用
+    - **任务看板**：五态分列的全员任务，阻塞项显示 blocked_by 依赖；每列在任务过多时列内独立滚动，列高占满当前视口
+  - 视觉与交互规范（已在 `site/index.html` 原型落地，后续演进以此为准）：
+    - 基调：Apple 式排版骨架（系统字体栈、大留白、圆角卡片、1px 半透明细线）+ **宣纸底色** `#f5f0e4`，卡片用亮半度的纸色 `#fdfbf5`，看板列用深一档纸色 `#efe8d8`
+    - 点缀色取低饱和传统色：朱砂 `#b03a2e`（受阻/危险）、黛蓝 `#3a5a7b`（邮件/主强调）、松绿 `#4a7a5e`（已完成）、赭石 `#b07d2b`（阻塞/退回）、紫檀 `#7d5a78`（回执/ref 引用）、藤黄 `#c9a227`（待确认）、墨灰 `#8a8474`（未开始）
+    - 布局：顶栏 = 品牌（Message Board · Audit View）+ 居中抬头「多人协作工作台 · Dashboard」+ 数据快照时间；导航是底部居中的**浮动胶囊 Tab**（毛玻璃、吸底）；页面铺满视口高度；`prefers-reduced-motion` 下关闭动效
+    - 数据：`data.json` 加载失败时回退到内置演示数据（`app.js` 的 `MOCK_DATA`），保证本地双击 `index.html` 也能完整预览交互
+  - 页面只含元数据，不含信件正文；正文回仓库看
+  - 前置手工步骤（仅一次）：仓库 Settings → Pages → Source 选 "GitHub Actions"，地址为 `https://<owner>.github.io/<repo>/`
+  - 延迟预期：**push 后约 30~90 秒网页更新**（Actions 排队是大头）。审计系统看的是"发生过什么"，分钟级延迟可接受；秒级实时不是这个架构的目标，不要追
+
+- **CI 治理（`.github/workflows/board.yml`）**——托管仓没有服务端 hook，用它顶替「邮局分拣中心」
+  - 触发：push 到 main；防环条件 `if: github.actor != 'github-actions[bot]'`
+  - 五个步骤：
+    1. **聚合**：扫所有 inbox frontmatter + 所有 task.yaml → 生成聚合数据（Python 函数，与 sync.py 共用）
+    2. **渲染 Markdown**：聚合数据 → `board/ledger/<user>.md` + `board/task-board.md`
+    3. **渲染网页产物**：聚合数据 → `data.json`；与 `site/` 静态前端一起打成 Pages 产物（yaml 解析失败的任务照常进数据、缺字段留空，不让单个坏文件阻塞构建）
+    4. **lint**：发现违规即 workflow 失败标红，但不改任何文件：
+       - 非 sync.py 提交记录中改动了 `workspaces/*/inbox/`（绕过投递引擎）
+       - `task.yaml` 的 status 不在五态枚举内
+       - 非 board-bot 提交改动了 `board/`
+    5. **发布**：Markdown 产物如有变化，以 board-bot 身份提交回仓库（commit message 前缀固定 `[board-bot]`，push 撞车 `git pull --rebase` 重试一次）；网页产物 `deploy-pages` 发布上线
+  - 现实妥协（写进文档让人知情）：
+    - 延迟：push 后约 30~90 秒台账/看板/网页才更新（Actions 排队），换来派生区绝对单写
+    - lint 只能事后标红，做不到自建 git pre-receive 那种当场拦截；不强开 branch protection，以免「每写一封信都要等 CI 绿」
+
+- **测试（`workspaces/tests/`）**——pytest，fixture 用临时目录 `git init` 的空仓当 origin
+  - write 带 `--type`/`--ref` 的 frontmatter 正确性；`--ref` 文件不存在时的拒绝路径
+  - task create / update / list 正常流；非法状态值拒绝；同名任务重复创建拒绝
+  - check 的「任务现状」段输出；全静默场景
+  - 台账/看板/data.json 生成函数：喂伪造的 inbox + tasks，断言分簿、分列、JSON schema、坏 yaml 降级正确（生成函数由 sync.py 与 board.yml 共用同一份代码）
 
 - **收件箱（`workspaces/<user>/inbox/`）**
   - **禁止**通过直接使用git操作该工作区，**必须**通过sync.py来操作
@@ -786,17 +1036,22 @@ EOF
 4. 达成共识的产出（方案、决议、规范）必须沉淀到 `share/`，不要只留在邮件或对话里。
 5. 重要工作在当前用户 `workspaces/<user>/log.md` 追加日志（按日期倒序，格式见工作日志的建议模板）。
 6. 当前用户身份记录在本机的 `workspaces/.current_user`，sync.py 会读取它；不要改动他人目录下的 `.sync_seen`。
+7. `board/` 是 CI 自动重建的派生区，只读不改。
+8. 任务状态变更一律用 `sync.py task` 完成；只能动自己 `workspaces/<自己>/` 下的文件，他人目录一律只读。
 
 ## 新邮件提醒（UserPromptSubmit 时机）
 
 每轮用户提交 prompt 时，UserPromptSubmit hook 自动执行 `sync.py check`，把未读邮件摘要作为附加上下文送进来。
-若摘要非空：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信。摘要为空则正常继续，不必提及。
+若摘要非空：向用户复述要点并询问如何处理；需要回复时使用 `sync.py write` 回信（应答协同单时用 `--type 回执/退回 --ref <原单>`）。摘要与任务现状均为空则正常继续，不必提及。
 
 ## 常用命令（在 `<project>/workspaces` 下运行）
 
-- 查未读：`uv run scripts/sync.py check`（hook 已自动执行）
+- 查未读 + 任务现状：`uv run scripts/sync.py check`（hook 已自动执行）
 - 读全文：`uv run scripts/sync.py read [--filename <name>]`
-- 写信：`uv run scripts/sync.py write --to <user>[,<user2>...] --subject "..." (--content "..." | --file <path>)`
+- 写信：`uv run scripts/sync.py write --to <user>[,<user2>...] --subject "..." [--type 协同单|回执|退回 --ref <原单文件名>] (--content "..." | --file <path>)`
+- 建任务：`uv run scripts/sync.py task create --name <任务名> [--from <协同单文件名>]`
+- 更新任务：`uv run scripts/sync.py task update --name <任务名> [--status 状态] [--blocked 说明]`
+- 列任务：`uv run scripts/sync.py task list`
 
 ## 新用户加入与初始化
 
@@ -846,7 +1101,8 @@ echo "<username>" > workspaces/.current_user
 
 ```bash
 mkdir -p workspaces/<username>/inbox workspaces/<username>/workspace
-printf '# <username> 的工作日志\n' > workspaces/<username>/log.md
+printf '# <username> 的工作日志
+' > workspaces/<username>/log.md
 ```
 
 若 `workspaces/<username>/` 已存在：该用户可能已加入过——与用户确认后跳过第 2、3 步，仅确保 `.current_user` 内容正确。
