@@ -27,6 +27,30 @@
 - 更新任务：`uv run scripts/sync.py task update --name <任务名> [--status 状态] [--blocked 说明]`
 - 列任务：`uv run scripts/sync.py task list`
 
+## 任务与看板怎么用（task / board）
+
+**任务从哪里来？** 收到协同单（type: 协同单）后，若接下来要做，就建一个任务包挂住它；一张协同单对应一个任务包。建任务时用 `--from` 记下上游协同单文件名（引擎会自动补 `inbox/` 前缀写进 task.yaml 的 `from` 字段），这样"哪张单派出了哪个活"可追溯。不想接的单**不要建任务**，直接 `write --type 退回 --ref <原单>` 退回。
+
+**任务状态怎么流转？** 任务状态只有五态，一律用 `sync.py task update` 改，禁止手改 task.yaml：
+
+| 你要做什么 | 命令 |
+|---|---|
+| 接下来接这单、建任务包 | `task create --name <任务名> [--from <协同单文件名>]`（初始态=未开始） |
+| 开始动手 | `task update --name <任务名> --status 进行中` |
+| 卡住了（等别人/缺东西） | `task update --name <任务名> --status 阻塞 --blocked "等 <谁> <什么>"` |
+| 干完、交付给派单人 | `task update --name <任务名> --status 待确认`，并发回执 `write --type 回执 --ref <原单>` |
+| 对方确认收下 | `task update --name <任务名> --status 已完成`（闭环） |
+
+注意：`task update` 至少要给 `--status` 或 `--blocked` 之一；状态不是「阻塞」时 blocked_by 会被复位成「无」。update 之后 `updated` 自动落当天日期。列自己全部任务：`task list`。
+
+**board/ 是什么、怎么看？** `board/` 是 CI（board.yml）在每次 push 后自动重建的**全局读视图**，给人和 Agent 看全组状态用的，本地永远只读、不手改（改了会被下次 CI 覆盖，且属 lint 违规）：
+
+- `board/task-board.md`：全员任务看板，按五态分列（每行含任务名、owner、上游 from、blocked_by）；
+- `board/ledger/<user>.md`：某人收件流水台账（时间/发件人/类型/标题/ref），按时间倒序；
+- 网页版（github.io）与这两个 Markdown 同源，看审计/演示用它。
+
+**什么时候读什么：** 汇报"我手头有什么"→ `task list`；汇报"全局/某人状态、谁阻塞最多"→ 读 `board/`（先 `git pull` 拿最新）；hook 已自动把"新信 + 任务现状"送进来。本地想即时预览全局视图而不等 CI：`uv run scripts/derive.py render --workspaces $PWD --board-dir /tmp/board --data-json /tmp/data.json`（产物在 /tmp，不进 git）。
+
 ## 新用户加入与初始化
 
 当用户表达过初始化或加入意图（如「我要以 `<username>` 身份加入」「帮我初始化这个工作区」「开始使用这个工作台」），或在工作中发现 `workspaces/.current_user` 缺失、其对应用户目录不存在时：阅读并执行 `docs/quickstart.md` 中的步骤完成初始化，不要凭记忆自行初始化。
