@@ -1,0 +1,76 @@
+name: board
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  board:
+    runs-on: ubuntu-latest
+    # 防环: board-bot 自己的提交不再触发本 workflow
+    if: github.actor != 'github-actions[bot]'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # lint 需要 base..head 历史
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: 安装依赖 (PyYAML)
+        run: |
+          cd workspaces
+          uv sync
+
+      - name: 聚合渲染（board/ + _site/data.json）+ 组装发布目录
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/_site"
+          cp site/index.html site/app.js "$GITHUB_WORKSPACE/_site/"
+          cd workspaces
+          uv run scripts/derive.py render \
+            --workspaces "$GITHUB_WORKSPACE/workspaces" \
+            --board-dir "$GITHUB_WORKSPACE/board" \
+            --data-json "$GITHUB_WORKSPACE/_site/data.json"
+          echo "发布目录内容:" && ls -la "$GITHUB_WORKSPACE/_site"
+
+      - name: lint 质检（违规即标红）
+        run: |
+          cd workspaces
+          uv run scripts/derive.py lint \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --base "${{ github.event.before }}" \
+            --head "${{ github.sha }}"
+
+      - name: board-bot 回提派生区 Markdown
+        run: |
+          if [ -n "$(git status --porcelain board)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add board
+            git commit -m "[board-bot] 更新派生区台账与看板"
+            git pull --rebase origin main
+            git push
+          else
+            echo "board/ 无变化,跳过回提"
+          fi
+
+      - name: 发布网页 (github.io)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

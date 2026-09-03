@@ -8,3 +8,7 @@ workspaces/*/.sync_seen
 
 # 系统杂物
 .DS_Store
+
+# 本地预览/CI 派生产物
+site/data.json
+_site/
